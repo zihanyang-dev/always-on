@@ -41,7 +41,7 @@ pnpm cli agents --json
 
 ## 已实现与下一步
 
-- 已实现：workspace、严格 TS、Biome、独立环境解析、健康接口、公开配置、中英文 Web 页面、CLI 状态查询与本地程序检测。
+- 已实现：pnpm 工作区、严格 TS、Biome、独立环境解析、健康接口、公开配置、中英文 Web 页面、CLI 状态查询与本地程序检测。
 - 已实现：Google/GitHub/邮箱密码认证后端、验证与重置邮件、持久登录会话、当前用户接口和 Redis 原子限流；登录前端尚未接入。
 - 已实现：PG Inbox 输入校验和并发去重；真实 BullMQ 诊断 Worker、PG 检查和带过期时间的 Redis Stream。
 - 尚未实现：团队空间与成员、登录前端、Router/Agent 执行、完整 Session/Run、设备连接、定时器/审批/Outbox、对象存储、Pi 适配和云端沙箱。对应目录中的 README 说明职责；没有模拟这些能力已经可用。
@@ -54,6 +54,8 @@ Inbox 当前仅提供内部存储入口，调用者提供可信 scope，尚无�
 - [目录与配置管理](docs/project-structure.md)
 - [TypeScript 规范](docs/typescript-style-guide.md)
 - [后端认证接入](docs/authentication.md)
+- [工作空间与授权方案](docs/workspaces-and-authorization.md)
+- [LobeHub 团队权限与 TS 授权调研](docs/research/teams-and-authorization.md)
 - [沙箱研究](docs/research/sandbox-design.md)
 
 `AGENTS.md` 保持简短，原始 TypeScript 指南保持完整。

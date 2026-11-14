@@ -11,12 +11,20 @@ catalog:
   zod: 4.6.7
   bullmq: 6.7.6
   drizzle-orm: 0.45.4
-  better-auth: 1.7.23
+  better-auth: 1.7.24
 
 minimumReleaseAgeExclude:
   - "@playwright/test@1.65.1"
   - playwright-core@1.65.1
   - playwright@1.65.1
+  - "@better-auth/core@1.7.24"
+  - "@better-auth/drizzle-adapter@1.7.24"
+  - "@better-auth/kysely-adapter@1.7.24"
+  - "@better-auth/memory-adapter@1.7.24"
+  - "@better-auth/mongo-adapter@1.7.24"
+  - "@better-auth/prisma-adapter@1.7.24"
+  - "@better-auth/telemetry@1.7.24"
+  - better-auth@1.7.24
 
 allowBuilds:
   esbuild: true

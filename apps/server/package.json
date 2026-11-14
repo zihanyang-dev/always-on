@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@always-on/contracts": "workspace:*",
-    "@better-auth/drizzle-adapter": "1.7.23",
+    "@better-auth/drizzle-adapter": "1.7.24",
     "@hono/node-server": "2.1.8",
     "better-auth": "catalog:",
     "bullmq": "catalog:",
