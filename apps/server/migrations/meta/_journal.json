@@ -8,6 +8,13 @@
       "when": 1794659067448,
       "tag": "0000_create_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794668569663,
+      "tag": "0001_add_authentication",
+      "breakpoints": true
     }
   ]
 }

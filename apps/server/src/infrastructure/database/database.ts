@@ -1,9 +1,12 @@
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import * as schema from './schema.js';
+import { AUTHENTICATION_TABLES } from './authentication-schema.js';
+import { INBOX_EVENTS } from './schema.js';
+
+const DATABASE_SCHEMA = { ...AUTHENTICATION_TABLES, inboxEvents: INBOX_EVENTS };
 
 /** Database handle shared with feature-owned queries and transactions. */
-export type Database = NodePgDatabase<typeof schema>;
+export type Database = NodePgDatabase<typeof DATABASE_SCHEMA>;
 /** Pool lifetime owned by the process or integration test that creates it. */
 export interface DatabaseResource extends AsyncDisposable {
   readonly db: Database;
@@ -25,7 +28,7 @@ export function openDatabase({
     query_timeout: 3_000,
   });
   pool.on('error', onError);
-  const db = drizzle(pool, { schema });
+  const db = drizzle(pool, { schema: DATABASE_SCHEMA });
   return { db, check, [Symbol.asyncDispose]: dispose };
 
   async function check() {

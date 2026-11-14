@@ -37,7 +37,8 @@ always-on/
 │   │   │       ├── database/           # 连接与按功能分文件的表定义
 │   │   │       ├── redis/              # Redis 客户端创建与释放
 │   │   │       ├── object-storage/     # 附件与产物的对象存储
-│   │   │       ├── authentication/     # 登录 SDK 与会话认证
+│   │   │       ├── authentication/     # 登录 SDK、会话认证与限流
+│   │   │       ├── email/              # Resend 事务邮件传输
 │   │   │       └── credentials/        # 凭据加解密与密钥版本
 │   │   ├── migrations/                 # 单一数据库的 SQL 迁移历史
 │   │   ├── drizzle.config.ts
@@ -124,13 +125,13 @@ flowchart TD
 
 ```dotenv
 NODE_ENV=development
-PUBLIC_URL=http://localhost:5173
+BETTER_AUTH_URL=http://localhost:3001
 PORT=3001
-DATABASE_URL=postgresql://always_on:local_dev_only@localhost:5432/always_on
-REDIS_URL=redis://localhost:6379
+DATABASE_URL=postgresql://always_on:always_on_local@localhost:15432/always_on
+REDIS_URL=redis://localhost:16379
 LOG_LEVEL=info
 WORKER_CONCURRENCY=4
-AUTH_SECRET=replace-with-a-generated-secret
+BETTER_AUTH_SECRET=replace-with-a-generated-secret
 CREDENTIALS_ENCRYPTION_KEY=replace-with-a-generated-key
 S3_ENDPOINT=http://localhost:9000
 S3_REGION=us-east-1
@@ -186,4 +187,4 @@ S3_SECRET_ACCESS_KEY=replace-with-a-local-secret-key
 
 先验证两种进程只校验所需配置、未启用 provider 不要求密钥、错误与日志不泄露输入、公开配置仅返回白名单、同一前端构建能用于不同部署。再验证 CLI 优先级、设置修改与已有 Run 的关系、取消及撤销、凭据隔离、共享包在生产 JS 入口下可运行。
 
-当前已落实进程环境解析、公开配置、Web 初始化页、CLI 状态查询和安装检测、PG Inbox 去重，以及 BullMQ/Redis Streams 的真实诊断链路。认证目录只预留 SDK 接入与身份校验；用户、成员和授权规则归业务功能。尚未实现的产品能力与启动步骤见 [README](../README.md)。CI 已覆盖静态检查、构建、单元测试、真实 PG/Redis 集成和桌面/移动视口冒烟；不将工程骨架描述为完整的 Agent 产品。取舍记录见 [ADR-0004](adr/0004-project-layout-and-configuration.md)。
+当前已落实进程环境解析、公开配置、Web 初始化页、CLI 状态查询和安装检测、PG Inbox 去重、BullMQ/Redis Streams 诊断链路，以及三种登录后端和当前用户接口。认证模块集中 SDK、会话和限流；`users` 拥有用户资料入口。成员和资源授权规则仍归后续业务功能。认证配置与限制见 [接入说明](authentication.md)，其他能力与启动步骤见 [README](../README.md)。CI 覆盖静态检查、构建、单元测试、真实 PG/Redis 集成和桌面/移动视口冒烟。取舍记录见 [ADR-0004](adr/0004-project-layout-and-configuration.md)。

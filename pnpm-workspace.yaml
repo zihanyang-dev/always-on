@@ -5,12 +5,13 @@ packages:
 catalog:
   "@biomejs/biome": 2.6.7
   "@playwright/test": 1.65.1
-  "@types/node": 24.19.2
+  "@types/node": 26.6.6
   typescript: 7.0.2
   vitest: 5.1.0
   zod: 4.6.7
   bullmq: 6.7.6
   drizzle-orm: 0.45.4
+  better-auth: 1.7.23
 
 minimumReleaseAgeExclude:
   - "@playwright/test@1.65.1"

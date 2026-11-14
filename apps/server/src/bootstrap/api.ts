@@ -1,5 +1,11 @@
 import { pino } from 'pino';
+import {
+  createAuthentication,
+  createAuthRateLimit,
+  type OAuthCredentials,
+} from '../infrastructure/authentication/index.js';
 import { openDatabase } from '../infrastructure/database/index.js';
+import { createResendSender } from '../infrastructure/email/index.js';
 import { openRedis } from '../infrastructure/redis/index.js';
 import { createApp } from './app.js';
 import { parseApiEnv } from './env.js';
@@ -22,9 +28,32 @@ async function main() {
   await using database = openDatabase({ url: env.DATABASE_URL, onError });
   await using redis = openRedis({ url: env.REDIS_URL, role: 'api', onError });
   await redis.client.connect();
+  const sendEmail = env.RESEND_API_KEY
+    ? createResendSender({ apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM })
+    : undefined;
+  await using authentication = createAuthentication({
+    db: database.db,
+    config: {
+      name: env.APP_NAME,
+      baseUrl: env.BETTER_AUTH_URL,
+      secret: env.BETTER_AUTH_SECRET,
+      google: getOAuthCredentials({
+        clientId: env.GOOGLE_CLIENT_ID,
+        clientSecret: env.GOOGLE_CLIENT_SECRET,
+      }),
+      github: getOAuthCredentials({
+        clientId: env.GITHUB_CLIENT_ID,
+        clientSecret: env.GITHUB_CLIENT_SECRET,
+      }),
+    },
+    sendEmail,
+    rateLimit: createAuthRateLimit({ redis: redis.client, prefix: env.REDIS_PREFIX }),
+    onError,
+  });
   const app = createApp({
     name: env.APP_NAME,
     checks: { database: database.check, redis: () => redis.client.ping() },
+    authentication,
     onError,
   });
   // Reverse-order disposal stops incoming requests before closing their backing connections.
@@ -36,4 +65,16 @@ async function main() {
   logger.info({ port: http.port }, 'API listening');
   await shutdown.wait;
   logger.info('API stopping');
+}
+
+function getOAuthCredentials({
+  clientId,
+  clientSecret,
+}: {
+  clientId: string | undefined;
+  clientSecret: string | undefined;
+}): OAuthCredentials | undefined {
+  // Disabled providers stay absent from the SDK's provider registry.
+  if (!clientId || !clientSecret) return undefined;
+  return { clientId, clientSecret };
 }

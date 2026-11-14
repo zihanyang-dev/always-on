@@ -5,7 +5,10 @@ const env = parseDatabaseEnv(process.env);
 
 export default defineConfig({
   dialect: 'postgresql',
-  schema: './src/infrastructure/database/schema.ts',
+  schema: [
+    './src/infrastructure/database/schema.ts',
+    './src/infrastructure/database/authentication-schema.ts',
+  ],
   out: './migrations',
   dbCredentials: { url: env.DATABASE_URL },
 });

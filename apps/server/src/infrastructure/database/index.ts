@@ -1,3 +1,4 @@
+export { AUTHENTICATION_TABLES } from './authentication-schema.js';
 export {
   type Database,
   type DatabaseResource,

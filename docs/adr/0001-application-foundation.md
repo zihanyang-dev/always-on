@@ -1,6 +1,6 @@
 # ADR-0001：通用 Always-on Agent 平台的技术栈与工程边界
 
-状态：基础工程已搭建。已落实 PostgreSQL、Redis + BullMQ、Redis Streams、React/Vite、Hono、Zod、Drizzle、CLI 和检查工具链；认证、Pi 与默认云端沙箱等仍待后续接入和验证。当前已实现能力见 [README](../../README.md)。
+状态：基础工程与后端认证已搭建。已落实 PostgreSQL、Redis + BullMQ、Redis Streams、React/Vite、Hono、Zod、Drizzle、Better Auth、CLI 和检查工具链；Pi 与默认云端沙箱等仍待后续接入和验证。当前已实现能力见 [README](../../README.md)。
 
 已确认的基础设施分工见 [后台队列与事件传输研究](../research/queue-and-event-transport.md)。Agent 执行层继续评估 Pi 与自建方案，并将多种本地 Agent 的 CLI 接入纳入设计，见 [执行层提案](0002-agent-execution-and-local-connector.md)。
 

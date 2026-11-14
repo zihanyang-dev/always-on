@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@12.15.0",
   "engines": {
-    "node": ">=24.12.0 <27"
+    "node": ">=26.13.1 <27"
   },
   "scripts": {
     "init:local": "node scripts/init-local.mjs",
@@ -24,12 +24,15 @@
     "cli": "node apps/cli/dist/bootstrap.js"
   },
   "devDependencies": {
+    "@always-on/contracts": "workspace:*",
     "@biomejs/biome": "catalog:",
     "@playwright/test": "catalog:",
     "@types/node": "catalog:",
+    "better-auth": "catalog:",
     "bullmq": "catalog:",
     "drizzle-orm": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "zod": "catalog:"
   }
 }

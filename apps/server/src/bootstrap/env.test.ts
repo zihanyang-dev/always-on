@@ -4,6 +4,7 @@ import { parseApiEnv, parseDatabaseEnv, parseWorkerEnv } from './env.js';
 const CONNECTIONS = {
   DATABASE_URL: 'postgresql://user:private-password@localhost/app',
   REDIS_URL: 'redis://localhost:6379',
+  BETTER_AUTH_SECRET: 'test-authentication-secret-at-least-thirty-two-characters',
 };
 
 describe('deployment configuration', () => {
@@ -13,7 +14,9 @@ describe('deployment configuration', () => {
       DATABASE_URL: CONNECTIONS.DATABASE_URL,
     });
     expect(parseApiEnv(CONNECTIONS).PORT).toBe(3001);
-    expect(parseApiEnv({ ...CONNECTIONS, REDIS_PREFIX: 'invalid:worker:prefix' }).PORT).toBe(3001);
+    expect(parseWorkerEnv({ ...CONNECTIONS, BETTER_AUTH_SECRET: '' }).REDIS_PREFIX).toBe(
+      'always-on',
+    );
   });
 
   it('rejects invalid limits and reports field names without input values', () => {
@@ -34,5 +37,21 @@ describe('deployment configuration', () => {
       expect(String(error)).not.toContain('secret-redis-value');
       expect(String(error)).not.toContain('private-password');
     }
+  });
+
+  it('requires complete OAuth credentials without requiring disabled providers', () => {
+    expect(parseApiEnv(CONNECTIONS).GOOGLE_CLIENT_ID).toBeUndefined();
+    expect(() => parseApiEnv({ ...CONNECTIONS, GOOGLE_CLIENT_ID: 'client-id' })).toThrow(
+      'GOOGLE_CLIENT_SECRET',
+    );
+    expect(() => parseApiEnv({ ...CONNECTIONS, GITHUB_CLIENT_SECRET: 'secret' })).toThrow(
+      'GITHUB_CLIENT_ID',
+    );
+    expect(() => parseApiEnv({ ...CONNECTIONS, NODE_ENV: 'production' })).toThrow(
+      'BETTER_AUTH_URL',
+    );
+    expect(() => parseApiEnv({ ...CONNECTIONS, EMAIL_FROM: 'invalid-sender' })).toThrow(
+      'EMAIL_FROM',
+    );
   });
 });

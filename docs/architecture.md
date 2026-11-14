@@ -4,7 +4,7 @@
 
 状态：收敛后的架构建议。PostgreSQL、Redis + BullMQ、Redis Streams 已确认；Pi 的具体集成方式和默认云端沙箱后端尚待最小链路验证。本文作为当前设计总览，替代早期提案中偏细的目录与抽象拆分；研究与 ADR 保留取舍依据。
 
-工程骨架已搭建：Web 初始化页、API/Worker、CLI、两个共享包、环境解析、初始迁移和 CI 均已落地。实际能力、待开发范围与运行命令见 [README](../README.md)。下文描述目标架构，不表示 Router、Agent 执行和沙箱已经实现。
+工程骨架和后端认证已搭建：Web 初始化页、API/Worker、CLI、两个共享包、环境解析、数据库迁移、三种登录后端和 CI 均已落地。实际能力、待开发范围与运行命令见 [README](../README.md)，认证行为见 [接入说明](authentication.md)。下文描述目标架构，不表示 Router、Agent 执行和沙箱已经实现。
 
 ## 一个后台，两种 Agent 角色，两种执行环境
 

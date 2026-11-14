@@ -7,6 +7,10 @@
     "dist"
   ],
   "exports": {
+    "./users": {
+      "types": "./dist/users.d.ts",
+      "import": "./dist/users.js"
+    },
     "./system": {
       "types": "./dist/system.d.ts",
       "import": "./dist/system.js"
