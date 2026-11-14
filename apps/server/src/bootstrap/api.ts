@@ -7,6 +7,7 @@ import {
 import { openDatabase } from '../infrastructure/database/index.js';
 import { createResendSender } from '../infrastructure/email/index.js';
 import { openRedis } from '../infrastructure/redis/index.js';
+import { createWorkspacePlugin } from '../workspaces/index.js';
 import { createApp } from './app.js';
 import { parseApiEnv } from './env.js';
 import { openHttpServer } from './http.js';
@@ -49,6 +50,7 @@ async function main() {
     sendEmail,
     rateLimit: createAuthRateLimit({ redis: redis.client, prefix: env.REDIS_PREFIX }),
     onError,
+    plugins: [createWorkspacePlugin({ baseUrl: env.BETTER_AUTH_URL, sendEmail })],
   });
   const app = createApp({
     name: env.APP_NAME,

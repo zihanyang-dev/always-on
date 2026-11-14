@@ -31,3 +31,6 @@ allowBuilds:
   msgpackr-extract: false
 
 strictPeerDependencies: true
+
+patchedDependencies:
+  better-auth@1.7.24: patches/better-auth@1.7.24.patch

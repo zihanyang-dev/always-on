@@ -2,8 +2,14 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { AUTHENTICATION_TABLES } from './authentication-schema.js';
 import { INBOX_EVENTS } from './schema.js';
+import { WORKSPACE_TABLES } from './workspace-schema.js';
 
-const DATABASE_SCHEMA = { ...AUTHENTICATION_TABLES, inboxEvents: INBOX_EVENTS };
+/** One model catalogue shared by Drizzle and the authentication adapter. */
+export const DATABASE_SCHEMA = {
+  ...AUTHENTICATION_TABLES,
+  ...WORKSPACE_TABLES,
+  inboxEvents: INBOX_EVENTS,
+};
 
 /** Database handle shared with feature-owned queries and transactions. */
 export type Database = NodePgDatabase<typeof DATABASE_SCHEMA>;

@@ -91,7 +91,7 @@ docs/
 
 这是职责图，随实现创建，不预建所有目录。数据库事务代码随相应功能维护；队列和 SDK 的具体依赖在组装处绑定。每个功能通过明确入口提供能力，单元测试相邻；SDK 研究和完整链路测试分别放入 `tests/sdk`、`tests/integration`。
 
-协作身份与团队 RBAC 已选用现有 Better Auth 的 organization 插件，尚未接入团队业务。工作空间角色、具体资源访问和 Agent 工具审批分别实施；完整范围与 SDK 验证项见 [工作空间与授权方案](workspaces-and-authorization.md)。
+协作身份与团队 RBAC 已通过现有 Better Auth 的 organization 插件接入后端。工作空间角色、具体资源访问和 Agent 工具审批分别实施；完整范围与 SDK 故障边界见 [工作空间与授权方案](workspaces-and-authorization.md)。
 
 第一版不再额外叠 application/domain/infrastructure 多套镜像目录、通用工作流 DSL、事件总线框架或每个角色独立进程。职责确实增长时，按状态归属与变化原因再拆分。
 

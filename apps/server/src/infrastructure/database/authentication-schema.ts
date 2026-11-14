@@ -23,6 +23,7 @@ export const AUTH_SESSIONS = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     ipAddress: text('ip_address'),
     userAgent: text('user_agent'),
+    activeOrganizationId: text('active_workspace_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

@@ -1,6 +1,6 @@
 # 后端认证接入
 
-已实现 Google、GitHub、邮箱密码登录，验证邮箱、找回密码、退出和当前用户查询。前端尚未增加登录页面。团队空间和成员功能是下一块业务，方案见 [工作空间与授权](workspaces-and-authorization.md)，尚未接入当前实现。
+已实现 Google、GitHub、邮箱密码登录，验证邮箱、找回密码、退出和当前用户查询。前端尚未增加登录页面。Workspace 与成员管理已在同一认证实例中接入，接口、角色与故障边界见 [工作空间与授权](workspaces-and-authorization.md)。
 
 ## 配置
 

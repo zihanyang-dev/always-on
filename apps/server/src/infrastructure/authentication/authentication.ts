@@ -4,8 +4,13 @@ import {
   type UserProfile,
 } from '@always-on/contracts/users';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
-import { type BetterAuthOptions, type BetterAuthRateLimitOptions, betterAuth } from 'better-auth';
-import { AUTHENTICATION_TABLES, type Database } from '../database/index.js';
+import {
+  type BetterAuthOptions,
+  type BetterAuthPlugin,
+  type BetterAuthRateLimitOptions,
+  betterAuth,
+} from 'better-auth';
+import { DATABASE_SCHEMA, type Database } from '../database/index.js';
 import type { SendEmail } from '../email/index.js';
 
 const CLIENT_IP_HEADER = 'x-always-on-client-ip';
@@ -37,12 +42,14 @@ export function createAuthentication({
   sendEmail,
   rateLimit,
   onError,
+  plugins = [],
 }: {
   db: Database;
   config: AuthenticationConfig;
   sendEmail: SendEmail | undefined;
   rateLimit: NonNullable<BetterAuthRateLimitOptions['customStorage']>;
   onError: (error: Error) => void;
+  plugins?: BetterAuthPlugin[];
 }): Authentication {
   const pending = new Set<Promise<unknown>>();
   const methods: LoginMethod[] = [];
@@ -61,10 +68,11 @@ export function createAuthentication({
     trustedOrigins: [new URL(config.baseUrl).origin],
     database: drizzleAdapter(db, {
       provider: 'pg',
-      schema: AUTHENTICATION_TABLES,
+      schema: DATABASE_SCHEMA,
       transaction: true,
     }),
     socialProviders,
+    plugins,
     emailAndPassword: {
       enabled: sendEmail !== undefined,
       requireEmailVerification: true,

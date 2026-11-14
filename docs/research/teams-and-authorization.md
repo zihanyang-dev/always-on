@@ -8,7 +8,7 @@ LobeHub 本地阅读快照为 `11a57dc4c0f04a99441cdd1c883c86c5fc0cd74e`；另�
 
 完整阅读了与下述结论对应的角色常量、工作空间/成员/RBAC/资源授权 schema 与 model、资源授权 service 和 router、工作空间查询过滤、公开的业务路由占位实现及 OpenAPI 工作空间/权限中间件。交叉阅读选定的私有资源、协作者授权隔离和成员离开测试。未审计完整仓库，未访问 LobeHub 的私有云端实现，未运行其测试或复现云端行为。
 
-最初按 Better Auth `1.7.23` 核对发布包并运行隔离 SQLite 探针。随后按用户要求补读官方组织实践、同版本组织和回滚测试、Hooks/数据库/Drizzle 文档及相关讨论，并将本仓库 Better Auth 与 Drizzle adapter 升至当次最新稳定版 `1.7.24`。Git diff 确认两个版本间本次涉及的组织插件实现与测试没有变化；尚未验证 organization 的 Drizzle/PostgreSQL 接入。
+最初按 Better Auth `1.7.23` 核对发布包并运行隔离 SQLite 探针。随后按用户要求补读官方组织实践、同版本组织和回滚测试、Hooks/数据库/Drizzle 文档及相关讨论，并将本仓库 Better Auth 与 Drizzle adapter 升至当次最新稳定版 `1.7.24`。Git diff 确认两个版本间本次涉及的组织插件实现与测试没有变化。本轮已接入真实 Drizzle/PostgreSQL 并验证下述流程。
 
 ## 官方实践复核
 
@@ -100,11 +100,11 @@ SDK 的 permission statements 表达“可对这种资源执行哪些操作”�
 
 以上来自发布包的 `plugins/access/access.mjs`、`plugins/organization/{has-permission,organization,adapter}.mjs`、`routes/{crud-org,crud-members,crud-invites}.mjs` 的相应调用路径。公开版本源代码可见 [访问控制](https://github.com/better-auth/better-auth/blob/v1.7.24/packages/better-auth/src/plugins/access/access.ts)、[组织入口](https://github.com/better-auth/better-auth/blob/v1.7.24/packages/better-auth/src/plugins/organization/organization.ts)、[邀请流程](https://github.com/better-auth/better-auth/blob/v1.7.24/packages/better-auth/src/plugins/organization/routes/crud-invites.ts)、[成员流程](https://github.com/better-auth/better-auth/blob/v1.7.24/packages/better-auth/src/plugins/organization/routes/crud-members.ts)。
 
-### 隔离 SQL 验证结果
+### SQL 验证结果与版本修正
 
-2026-11-15 新增 tests/sdk/better-auth-organization.test.ts，使用 SDK 公开测试工具及独立内存 SQLite 数据库；不访问本项目 PG、Redis、真实用户或邮件服务。SDK 工具在用例结束后关闭数据库，快速测试密码散列仅用于 SDK 测试。该文件纳入 pnpm test 与现有 CI。
+2026-11-15 最初使用 SDK 公开工具和隔离 SQLite 验证下述行为；随后以实际 Drizzle adapter、同一 PG schema 与 transaction: true 配置复核。原 SQLite 测试已替换为 tests/sdk/better-auth-organization.pg.test.ts，纳入 pnpm test:integration 与现有 CI，快速测试散列仅用于 SDK 探针。真实应用链路另在 tests/integration/workspaces.test.ts 中通过 Hono、PG、Redis 与内存邮箱验收。
 
-五个用例已在 1.7.23 与升级后的 1.7.24 上通过，记录的是以下测试配置下的行为；第 3/4 项需要实际 Drizzle/PG 复核，第 5 项首先是产品语义选择：
+初始 SQLite 探针在 1.7.23 与 1.7.24 上观察到以下行为；第 1/2 项已由真实应用链路覆盖，第 3/4 项在未修改的 1.7.24 Drizzle/PG 配置中也已复现，第 5 项属于产品语义选择：
 
 1. 已授权组织的能力检查正常；拒绝角色能力时 HTTP 为 200、success 为 false；指定非成员组织时拒绝。
 2. 已启用的邮箱验证要求阻止未验证收件人；验证后可接受邀请，再次接受拒绝，成员只有一条。
@@ -112,9 +112,9 @@ SDK 的 permission statements 表达“可对这种资源执行哪些操作”�
 4. 用公开 beforeRemoveMember 钩子设置并发屏障，让两个 Owner 都完成先前的计数检查后互相移除；两个请求均成功，组织不剩成员。
 5. 邀请者被另一位 Owner 移除后，已验证的收件人仍能接受此前发出的邀请。这体现邀请按组织授权、状态与有效期继续存在的默认语义；“离任即撤销”属于额外产品政策，当前不擅自增加。
 
-这些验证说明指定版本、指定 SQL adapter 和钩子配置下的观察，不能替代 Drizzle/PG 的配置和故障测试，也不能据此决定加触发器或替换官方接口。第 3 项采用注入钩子失败，第 4 项采用确定性的交错顺序；未模拟真实进程崩溃或开展线上漏洞验证。它们是升级复核的观察记录，不是希望应用长期维持的失败行为。
+真实 PG 另确认：删除组织在末尾被限制性 FK 拒绝时，成员和邀请的级联步骤能够回滚；邀请领取后成员写入发生可捕获 FK 失败时，成员事务回滚且邀请恢复 pending。没有模拟进程崩溃或开展线上漏洞验证。
 
-1.7.24 升级后，仓库类型/lint 检查、28 项单元与 SDK 测试、10 项现有 PG/Redis 集成测试通过。现有集成测试覆盖已实现的登录和基础设施，不代表 organization 的 PG 接入已完成。
+第 3/4 项已通过精确版本的 pnpm 补丁修正 SDK 事务范围与空间行锁，继续使用原有组织管理接口。PG 回归现在要求创建钩子失败后组织与首位成员均不存在，并以 pg_stat_activity 确认并发移除实际等待数据库锁、等待者随后重新检查身份。应用回归还覆盖两个 Owner 并发退出和降权。补丁原因、适用配置和升级删除条件见[实现说明](../workspaces-and-authorization.md#版本补丁与升级)，不把未修改的 SDK 行为误记为官方保证。
 
 ## 本轮结论
 

@@ -1,18 +1,18 @@
 # 工作空间、成员与授权方案
 
-日期：2026-11-15。用户已确认采用 Better Auth。本文是接入方案，团队业务尚未实现；前端继续留待后续。依据见 [官方实践与 LobeHub 调研](research/teams-and-authorization.md)，选型见 [ADR-0005](adr/0005-workspace-authorization.md)。
+日期：2026-11-15。Workspace 后端已接入 Better Auth 1.7.24；前端尚未实现。本文说明接口、角色、数据归属与实际验证边界。依据见 [官方实践与 LobeHub 调研](research/teams-and-authorization.md)，选型见 [ADR-0005](adr/0005-workspace-authorization.md)。
 
 ## 采用官方流程的原则
 
 以当前稳定版 Better Auth 的公开配置、organization 插件和 Drizzle adapter 为基础。组织创建、成员、邀请、角色修改和删除使用 SDK 公开接口；调整产品行为时优先采用公开配置和 hooks。官方 [Hooks 文档](https://www.better-auth.com/docs/concepts/hooks) 明确建议通过 hooks 调整既有端点。
 
-保留 SDK 的创建接口和成员流程。隔离测试只说明其特定配置下的行为，不能单独证明实际 Drizzle/PG 部署需要自定义创建流程或数据库触发器；这类改动须先有相同配置下的复现、产品约束和上游方案评估。尚待核实的问题保留为接入验证项。
+保留 SDK 的创建接口和成员流程。先在实际 Drizzle/PG 配置下复现一致性问题，再通过版本补丁修正 SDK 的事务边界；补丁范围与删除条件见下文。组织、成员及角色仍只有 SDK 管理的一组事实。
 
 参考官方维护的 [organization-best-practices](https://github.com/better-auth/skills/blob/20c9e88a5c007461a703f1c213572b073196113e/better-auth/organization/SKILL.md) 组织接入流程；API 签名、返回字段和钩子名称以同版本文档、公开类型及官方测试为准。指南中的概略示例不直接复制为生产实现。
 
 ## 首轮业务范围
 
-实现创建和列出工作空间、修改基本资料、成员列表、邮箱邀请与接受/拒绝/取消、角色修改、退出及移除成员，并验证每个入口的服务端授权。先贯通真实 PG 下的后端链路，登录和邀请页面后续实现。
+已实现创建和列出工作空间、修改基本资料、成员列表、邮箱邀请与接受/拒绝/取消/重发、角色修改、退出、移除成员及删除空间，真实 PG 测试覆盖服务端授权。登录和邀请页面后续实现。
 
 产品统一使用 Workspace 表达人类协作空间，SDK 的 Organization 对应同一实体。一个用户可以加入多个空间，角色互相独立；只有一个成员的空间也可用于个人工作。任务的本地工作目录、多个 Agent 的协作组分别属于执行与 Agent 功能。
 
@@ -60,7 +60,7 @@ Owner 角色不自动赋予别人的私有内容、个人电脑或全部工具�
 
 ## 角色与官方配置
 
-采用 SDK 默认的 owner/admin/member，并按官方自定义角色方式增加只读 viewer。`createAccessControl` 的 statements 与角色定义只维护一份，自定义既有角色时明确合并 SDK 默认组织管理权限。
+直接复用 SDK 的 owner/admin/member 权限对象，并通过其 `defaultAc.newRole({})` 增加只读 viewer。角色定义只维护一份；具体业务资源落地后再扩充 statements，同时保留默认组织管理权限。
 
 | 角色 | 首版含义 |
 | --- | --- |
@@ -71,7 +71,7 @@ Owner 角色不自动赋予别人的私有内容、个人电脑或全部工具�
 
 界面可以先提供单角色选择。SDK 支持多个角色，后端沿用其角色组合与检查语义，不自行按名称排优先级，也不添加与 SDK 的角色存储格式冲突的单值 SQL 约束。
 
-沿用 SDK 的多 Owner 模型及最后一个 Owner 保护；移交时先赋予另一位成员 Owner，再由原 Owner 退出或降权。目前不引入与账单绑定的 primaryOwnerId。并发场景仍需在实际 PG 配置下验证，不能把官方的常规流程保护扩大描述为所有交错下的数据库不变量。
+沿用 SDK 的多 Owner 模型及最后一个 Owner 保护；移交时先赋予另一位成员 Owner，再由原 Owner 退出或降权。目前不引入与账单绑定的 primaryOwnerId。版本补丁保证通过当前管理接口执行的 Owner 检查与变更在同一空间内串行化；这不是任意直接 SQL 写入均受约束的数据库不变量。
 
 | 配置 | 接入建议 |
 | --- | --- |
@@ -91,9 +91,9 @@ Owner 角色不自动赋予别人的私有内容、个人电脑或全部工具�
 
 继续使用现有 PostgreSQL、Drizzle 和 `drizzleAdapter({ provider: 'pg', transaction: true })` 配置。SDK 事务支持按其实际调用范围工作；不声称开关能把整个 HTTP 请求及外部邮件都变成一个事务。
 
-按官方插件配置运行 schema generate，将生成结果与现有认证 schema 对照，再通过仓库已有 Drizzle 迁移流程提交和应用。Drizzle adapter 使用 schema 生成加 ORM 迁移；不使用仅适用于内置 Kysely adapter 的 auth migrate 路径。
+已通过官方 `auth@1.7.24 generate --adapter drizzle --dialect postgresql` 按实际插件配置核对新增模型，再通过已有 Drizzle 流程生成和应用 `0002_workspaces.sql`。Drizzle adapter 使用 schema 生成加 ORM 迁移；不使用仅适用于内置 Kysely adapter 的 auth migrate 路径。
 
-预计增加 organization、member、invitation 三个模型，以及登录会话的 activeOrganizationId；关闭的 Teams 和动态角色不增加对应模型。字段、索引和关系以生成结果及公开 schema 为准。SQL 表名可映射为 workspaces、workspace_members、workspace_invitations，仍只保存一组事实。
+新增 organization、member、invitation 三个模型，以及登录会话的 activeOrganizationId；关闭的 Teams 和动态角色没有对应模型。SQL 表名映射为 workspaces、workspace_members、workspace_invitations，organizationId 和 activeOrganizationId 分别映射为 workspace_id 和 active_workspace_id；SDK wire 字段保持原名。
 
 已有用户、账号、会话与验证记录不重新生成覆盖。SDK 的对象字段遵循公开命名，数据库列名按现有约定映射；不在业务模块复制一套成员或角色记录。
 
@@ -127,11 +127,11 @@ hooks 用于已明确的产品校验、字段补充或通知。可预期拒绝�
 
 邀请由组织授权产生，按 SDK 的状态、有效期、邮箱匹配和取消流程处理。收件人登录并验证邮箱后，POST 接受。默认沿用 SDK 的邀请有效性语义：邀请者离开不自动等于撤销所有已发邀请；有权限的管理者可以取消。若以后明确要求离任即撤销，再通过公开生命周期钩子实现该产品规则，不先把默认行为判为缺陷。
 
-当前还没有邀请落地页，先用 API 与内存收件箱验收，不发送指向未实现页面的正式邀请。接前端时一并完成登录后返回、邀请展示、接受按钮、过期/取消/已加入状态和真实邮件验证。GET 打开页面，POST 才执行接受。
+当前邀请邮件链接指向已实现的 SDK `GET /api/auth/organization/get-invitation?id=…`，需要以收件人身份登录并验证邮箱；GET 只读取详情，接受仍需显式 POST。没有额外邀请页面。接前端时再替换为页面链接，一并完成登录后返回、状态展示和真实邮件验证。
 
 复用 Resend 与当前受管理的后台工作，不单独增加邮件框架。创建邀请成功与邮件送达分别描述；目前进程内投递允许重发，不提供跨崩溃投递保证。后续已有持久 Outbox 时统一接入。
 
-Resend 测试发件人暂时只覆盖账号绑定邮箱；正式对外邀请需要自己的已验证发信域名。中英文展示与邮件文案使用对应文案资源；wire 角色值保持稳定。
+未配置邮件发送器时，SDK 仍创建可通过 ID 接受的邀请，不声称已投递邮件。Resend 测试发件人暂时只覆盖账号绑定邮箱；正式对外邀请需要自己的已验证发信域名。当前服务端邮件与认证邮件统一为英文纯文本；接前端语言选择时再接邮件语言资源，wire 角色值保持稳定。
 
 ## 资源、撤权与 Worker
 
@@ -149,19 +149,35 @@ Worker 依据持久任务中的执行主体，在执行前使用当前成员事�
 
 已阅读官方组织插件的角色、Owner 保护、邀请、字段返回及级联回滚测试，和组织在数据库 hooks 中创建的测试。使用本仓库匹配版本复核，而不是把旧版本 Issue 或机器人回复当作现行规则。
 
-现有 `tests/sdk/better-auth-organization.test.ts` 使用官方公开测试工具，但后端是内存 SQLite/Kysely，包含测试散列、注入钩子失败和并发屏障。这些是版本行为探针，不是 Drizzle/PG 的生产保证，也不是我们希望长期维持的错误行为。
+`tests/integration/workspaces.test.ts` 通过真实 Hono、认证实例、PG、Redis 和内存邮箱验证业务流程。测试用户实际注册、验证邮箱、登录，再通过公开邀请入口加入空间，不直接插入成员。`tests/sdk/better-auth-organization.pg.test.ts` 采用官方测试工具、测试散列和实际 Drizzle/PG adapter，专门保护补丁的故障与锁边界；没有访问真实邮件服务。
 
-| 类别 | 下一步验证 |
+| 类别 | 已验证 |
 | --- | --- |
 | 配置与迁移 | 官方生成 schema 对照、实际列/索引与 adapter 配置一致 |
 | 常规组织流程 | 官方创建、列表、资料修改、退出与删除，使用 SDK 的原有入口 |
 | 权限 | 四种角色、SDK 多角色组合、无成员身份、跨空间参数、success=false 的拒绝语义 |
 | 邀请 | 邮箱验证、邮箱匹配、重发、过期、取消、重复与并发接受 |
 | 事务与失败 | 在真实 Drizzle/PG 上检查创建及初始成员失败、邀请状态与成员提交、级联失败回滚 |
-| Owner | 常规最后 Owner 保护、并发退出/降权，并与同版本官方测试比较 |
+| Owner | 常规最后 Owner 保护、并发互相移除、并发退出及降权；PG 锁等待探针验证真实串行化 |
 | 回归 | Google/GitHub/邮箱登录、会话撤销、当前用户与限流继续通过 |
 
-若实际配置下仍有影响产品所需保证的问题，先检索同版本上游修复与公开扩展方案，形成最小复现和明确需求，再决定处理。当前不预定 SQL 触发器、不禁用 SDK 创建入口，也不自行复刻组织事务。尚未验证的问题不会写成已解决。
+SDK 探针纳入 `pnpm test:integration` 与现有 CI；普通 `pnpm test` 无需数据库。之前的 SQLite 组织探针已由 PG 回归替换，避免同时维护重复且证据范围不同的测试。
+
+## 版本补丁与升级
+
+未修改的 1.7.24 在相同 Drizzle/PG 配置下复现两项问题：初始成员钩子失败会留下空空间；两个 Owner 在计数后并发互相移除可留下零成员。官方公开 hooks 不能将这些既有路由的检查和写入包进同一事务，现有版本也没有对应开关。
+
+`patches/better-auth@1.7.24.patch` 因此只修正 SDK 内部的事务范围和锁顺序：
+
+- 创建组织及首位成员共用 SDK 的 `runWithTransaction`；创建前后钩子失败一并回滚。
+- 移除、角色变更、退出及删除先在事务中对组织执行同值 ID 更新，获取 PG 行锁；随后重新读取成员、角色和 Owner 数量，再执行原有 SDK 校验与写入。
+- Owner 数量查询使用当前事务 adapter，删除也遵守相同锁顺序。SDK 自有的成员及级联事务加入外层事务。
+
+这保留公开接口、默认角色和错误协议，没有自定义创建接口、补偿删除流程或 SQL 触发器。锁作用于 PG 中的空间行，能够协调多个 API 进程。当前保证针对本仓库的 PG、真实事务和默认 READ COMMITTED 隔离；不推导到禁用事务的 adapter、任意数据库或直接 SQL 管理操作。事务中 hooks 不应承担不可撤销的外部副作用。
+
+pnpm 按精确版本应用补丁，源码、锁文件及回归一起提交。升级 Better Auth 时先比较上游相关实现；修复已上游化且 PG 回归通过后，删除补丁及 `patchedDependencies`，继续保留行为回归。需要修改锁机制时同时审查所有 Owner 变更和删除入口，不能只修一个路由。
+
+邀请的 pending→accepted 条件领取与成员事务仍是 SDK 的两阶段实现；可捕获成员写入失败会恢复 pending，已验证回滚，但未提供进程在领取后崩溃时的自动恢复保证。进程内邮件投递同样没有跨崩溃保证。这些需要后续持久任务与 Outbox 明确恢复规则，当前不伪装成完整的可靠执行系统。
 
 ## 目录与实施顺序
 
@@ -178,6 +194,6 @@ apps/server/src/infrastructure/database/
 
 需要业务成员解析入口时再在 workspaces 中增加相应实现。纯规则测试相邻；第三方 SDK 行为测试在 tests/sdk，跨应用真实链路在 tests/integration，不机械地为每个 SDK 方法新建函数或文件。
 
-实施顺序：锁定稳定版并生成 schema → 接入官方 organization 配置和默认流程 → 验证实际 PG/Drizzle 的角色、邀请及失败语义 → 再接 Agent 的最小业务链路。前端与真实邀请投递在允许接前端后一起完成。
+本阶段已完成稳定版核对、schema/迁移、官方接口接入和真实 PG/Redis 验收。下一步可接 Agent 的最小业务链路；前端与真实邀请投递在允许接前端后一起完成。
 
 本阶段不需要新的密钥，继续使用现有 BETTER_AUTH_SECRET、BETTER_AUTH_URL、RESEND_API_KEY 与 EMAIL_FROM。角色和成员是产品事实，部署 env 不授予业务身份。

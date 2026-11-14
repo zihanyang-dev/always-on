@@ -43,8 +43,9 @@ pnpm cli agents --json
 
 - 已实现：pnpm 工作区、严格 TS、Biome、独立环境解析、健康接口、公开配置、中英文 Web 页面、CLI 状态查询与本地程序检测。
 - 已实现：Google/GitHub/邮箱密码认证后端、验证与重置邮件、持久登录会话、当前用户接口和 Redis 原子限流；登录前端尚未接入。
+- 已实现：Workspace 后端、Owner/Admin/Member/Viewer、成员管理、邮箱邀请生命周期与跨空间授权，使用 Better Auth organization 的官方接口。并发与故障边界见[实现说明](docs/workspaces-and-authorization.md)。
 - 已实现：PG Inbox 输入校验和并发去重；真实 BullMQ 诊断 Worker、PG 检查和带过期时间的 Redis Stream。
-- 尚未实现：团队空间与成员、登录前端、Router/Agent 执行、完整 Session/Run、设备连接、定时器/审批/Outbox、对象存储、Pi 适配和云端沙箱。对应目录中的 README 说明职责；没有模拟这些能力已经可用。
+- 尚未实现：登录及 Workspace 前端、Router/Agent 执行、完整 Session/Run、设备连接、定时器/审批/Outbox、对象存储、Pi 适配和云端沙箱。对应目录中的 README 说明职责；没有模拟这些能力已经可用。
 
 Inbox 当前仅提供内部存储入口，调用者提供可信 scope，尚无未认证写入接口；可靠执行还需同事务待派发动作、执行所有权和恢复规则。诊断队列不承担产品任务。
 

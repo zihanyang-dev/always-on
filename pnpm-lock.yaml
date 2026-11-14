@@ -192,6 +192,9 @@ catalogs:
       specifier: 4.6.7
       version: 4.6.7
 
+patchedDependencies:
+  better-auth@1.7.24: afde9d330be41be4b636249b3e04947a28e68c0a769bf5332f9d01efc0e1b79c
+
 importers:
 
   .:
@@ -210,7 +213,7 @@ importers:
         version: 26.6.6
       better-auth:
         specifier: 'catalog:'
-        version: 1.7.24(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
+        version: 1.7.24(patch_hash=afde9d330be41be4b636249b3e04947a28e68c0a769bf5332f9d01efc0e1b79c)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
       bullmq:
         specifier: 'catalog:'
         version: 6.7.6(ioredis@6.0.0)(pg@8.23.1)
@@ -252,7 +255,7 @@ importers:
         version: 2.1.8(hono@4.13.18)
       better-auth:
         specifier: 'catalog:'
-        version: 1.7.24(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
+        version: 1.7.24(patch_hash=afde9d330be41be4b636249b3e04947a28e68c0a769bf5332f9d01efc0e1b79c)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
       bullmq:
         specifier: 'catalog:'
         version: 6.7.6(ioredis@6.0.0)(pg@8.23.1)
@@ -2831,7 +2834,7 @@ snapshots:
 
   atomic-sleep@1.0.0: {}
 
-  better-auth@1.7.24(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))):
+  better-auth@1.7.24(patch_hash=afde9d330be41be4b636249b3e04947a28e68c0a769bf5332f9d01efc0e1b79c)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))):
     dependencies:
       '@better-auth/core': 1.7.24(@better-auth/utils@0.5.1)(@better-fetch/fetch@1.3.3)(better-call@1.4.5(zod@4.6.7))(jose@6.2.17)(kysely@0.29.9)(nanostores@1.5.5)
       '@better-auth/drizzle-adapter': 1.7.24(@better-auth/core@1.7.24(@better-auth/utils@0.5.1)(@better-fetch/fetch@1.3.3)(better-call@1.4.5(zod@4.6.7))(jose@6.2.17)(kysely@0.29.9)(nanostores@1.5.5))(@better-auth/utils@0.5.1)(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.9)(pg@8.23.1))

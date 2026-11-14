@@ -30,8 +30,12 @@ export function createApp({
   });
   app.use('*', secureHeaders());
   app.use('/api/auth/*', bodyLimit({ maxSize: AUTH_BODY_LIMIT_BYTES }));
-  app.all('/api/auth/*', (ctx) => {
+  app.use('/api/auth/*', async (ctx, next) => {
+    await next();
+    // The SDK returns its own Response, so apply privacy headers after it has been attached.
     ctx.header('Cache-Control', 'no-store');
+  });
+  app.all('/api/auth/*', (ctx) => {
     return authentication.handle({ request: ctx.req.raw, clientIp: getClientIp(ctx.env) });
   });
   app.route('/api', createUserRoutes({ getUser: authentication.getUser }));
