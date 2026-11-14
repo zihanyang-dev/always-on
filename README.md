@@ -1,0 +1,57 @@
+# Always On
+
+通用长期运行 Agent 平台的工程骨架。Web、API/Worker、CLI 共用明确的协议契约；产品状态保存在 PostgreSQL，BullMQ 负责后台任务，Redis Streams 负责实时事件。
+
+## 本地启动
+
+使用 `.node-version` 中的 Node 版本和 `package.json` 中锁定的 pnpm，准备可用的 Docker。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm init:local
+pnpm infra:up
+pnpm build
+pnpm db:migrate
+pnpm dev
+```
+
+Web：`http://localhost:5173`，API：`http://localhost:3001`。PG 使用 `15432`，Redis 使用 `16379`；不会复用现有项目的服务或数据卷。`infra:down` 停止本项目服务并保留卷。
+
+`.env.example` 是本地后端配置说明，`.env.local` 保存实际值且不会提交。`init:local` 不覆盖现有文件。API/Worker 启动时各自解析所需配置；Web 通过同源 `/api` 获取白名单公开设置。
+
+Web 使用 i18next / react-i18next 支持英文和简体中文。首次访问检测浏览器语言，其他语言回退为英文；页头可切换语言，选择保存在 `localStorage` 的 `always-on.language`。公共文案放在 `app/locales`，功能文案放在对应功能的 `locales`，翻译 key 由资源推导并接受 TypeScript 检查。
+
+Docker Hub 不可达时，可在 `.env.local` 设置 `POSTGRES_IMAGE` / `REDIS_IMAGE`，例如 Google 官方镜像缓存中的 `mirror.gcr.io/library/postgres:17-alpine` 与 `mirror.gcr.io/library/redis:8-alpine`。更换镜像应保留对应服务的主版本与数据目录约定。
+
+## 验证与 CLI
+
+```sh
+pnpm check
+pnpm test
+pnpm test:integration
+pnpm exec playwright install chromium
+pnpm test:e2e
+pnpm cli status
+pnpm cli agents --json
+```
+
+集成测试需要已迁移的 PG 和 Redis。浏览器测试自行启动 API 与 Web，使用独立测试进程；运行前释放本项目的 `3001` 和 `5173` 端口。CLI 命令使用已构建产物，修改后运行 `pnpm build`。
+
+`db:generate` 生成迁移；`db:migrate` 应用已提交迁移。生产迁移单独执行，API/Worker 启动不会抢跑迁移。CI 在 PR 和 push 时执行检查、单元测试、构建、真实基础设施测试与桌面/移动浏览器测试，不发布部署。
+
+## 已实现与下一步
+
+- 已实现：workspace、严格 TS、Biome、独立环境解析、健康接口、公开配置、中英文 Web 页面、CLI 状态查询与本地程序检测。
+- 已实现：PG Inbox 输入校验和并发去重；真实 BullMQ 诊断 Worker、PG 检查和带过期时间的 Redis Stream。
+- 尚未实现：用户认证、Router/Agent 执行、完整 Session/Run、设备连接、定时器/审批/Outbox、对象存储、Pi 适配和云端沙箱。对应目录中的 README 说明职责；没有模拟这些能力已经可用。
+
+Inbox 当前仅提供内部存储入口，调用者提供可信 scope，尚无未认证写入接口；可靠执行还需同事务待派发动作、执行所有权和恢复规则。诊断队列不承担产品任务。
+
+## 文档
+
+- [架构总览](docs/architecture.md)
+- [目录与配置管理](docs/project-structure.md)
+- [TypeScript 规范](docs/typescript-style-guide.md)
+- [沙箱研究](docs/research/sandbox-design.md)
+
+`AGENTS.md` 保持简短，原始 TypeScript 指南保持完整。

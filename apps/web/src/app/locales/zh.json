@@ -1,0 +1,14 @@
+{
+  "app": {
+    "title": "Always On",
+    "home": "{{name}} 首页",
+    "edition": "开发预览",
+    "footer": "给工作留一份连续的上下文。"
+  },
+  "language": {
+    "label": "语言",
+    "en": "English",
+    "zh": "简体中文",
+    "failed": "暂时无法切换语言，请重试。"
+  }
+}

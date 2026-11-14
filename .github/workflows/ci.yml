@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Types, lint, unit tests, build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v3
+        with:
+          install: false
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm build
+
+  integration:
+    name: PG, Redis, browser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: always_on
+          POSTGRES_PASSWORD: always_on_local
+          POSTGRES_DB: always_on
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U always_on -d always_on"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v3
+        with:
+          install: false
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm init:local
+      - run: pnpm build
+      - run: pnpm db:generate
+      - run: git diff --exit-code -- apps/server/migrations
+      - run: pnpm db:migrate
+      - run: pnpm test:integration
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-failure
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

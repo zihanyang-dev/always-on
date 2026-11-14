@@ -1,0 +1,35 @@
+{
+  "name": "always-on",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=24.12.0 <27"
+  },
+  "scripts": {
+    "init:local": "node scripts/init-local.mjs",
+    "dev": "pnpm build && pnpm -r --parallel --stream run \"/^dev:/\"",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm build:packages && pnpm -r run typecheck && tsc -p tests/tsconfig.json",
+    "build:packages": "pnpm --filter \"./packages/*\" -r run build",
+    "check": "biome check . && pnpm typecheck",
+    "format": "biome check --write .",
+    "test": "pnpm build:packages && vitest run",
+    "test:integration": "pnpm build:packages && node --env-file=.env.local node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts",
+    "test:e2e": "node --env-file=.env.local node_modules/@playwright/test/cli.js test",
+    "infra:up": "docker compose --env-file .env.local up -d --wait postgres redis",
+    "infra:down": "docker compose --env-file .env.local down",
+    "db:generate": "pnpm --filter @always-on/server db:generate",
+    "db:migrate": "pnpm --filter @always-on/server db:migrate",
+    "cli": "node apps/cli/dist/bootstrap.js"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "bullmq": "catalog:",
+    "drizzle-orm": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

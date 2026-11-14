@@ -1,0 +1,52 @@
+{
+  "date": "2026-11-14",
+  "article": "https://claude.com/resources/articles/building-always-on-agents",
+  "article_read": "full",
+  "repositories": [
+    {
+      "name": "dsh-superagent-prototype",
+      "url": "https://github.com/deepseek-ai/dsh-superagent-prototype.git",
+      "branch": "main",
+      "commit": "8c32a9dc5d72c033816c6a8110b37f40cf94fba4",
+      "tracked_files": 216,
+      "scope": "Agent/harness architecture paths discussed in reading-notes.txt; not a full-repository line-by-line read",
+      "working_tree_clean": true
+    },
+    {
+      "name": "lobehub",
+      "url": "https://github.com/lobehub/lobehub.git",
+      "branch": "canary",
+      "commit": "11a57dc4c0f04a99441cdd1c883c86c5fc0cd74e",
+      "tracked_files": 24971,
+      "scope": "Agent/harness paths in reading-notes.txt; selected CLI connector and heterogeneous-agent paths in pi-and-local-agent-executors.md; sandbox provider/session/lifecycle paths in sandbox-design.md; not a full-repository line-by-line read",
+      "working_tree_clean": true
+    },
+    {
+      "name": "pi",
+      "url": "https://github.com/earendil-works/pi.git",
+      "requested_url": "https://github.com/badlogic/pi-mono.git",
+      "branch": "main",
+      "commit": "c815ddaa3736bd0b009ce6a997ee5003f8a3a532",
+      "tracked_files": 4571,
+      "scope": "Complete agent-loop.ts, agent.ts and coding-agent sdk.ts; selected event types, session persistence, RPC and durable storage/tool recovery paths listed in pi-and-local-agent-executors.md; not a full-repository line-by-line read",
+      "working_tree_clean": true
+    }
+  ],
+  "validation": "Static source reading and selected test inspection; repository tests, SDK integration probes and product/model runs not executed",
+  "sandbox_references": {
+    "date": "2026-11-14",
+    "scope": "Official architecture/lifecycle documentation and selected public interfaces; no provider deployments, full repository audit or benchmarks",
+    "urls": [
+      "https://docs.e2b.dev/sandbox",
+      "https://docs.e2b.dev/sandbox/persistence",
+      "https://github.com/e2b-dev/runtime/blob/main/docs/ARCHITECTURE.md",
+      "https://vercel.com/docs/sandbox",
+      "https://vercel.com/docs/sandbox/concepts/snapshots",
+      "https://www.daytona.io/docs/en/persistence/",
+      "https://www.daytona.io/docs/en/architecture/",
+      "https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/architecture/index.md",
+      "https://github.com/opensandbox-group/OpenSandbox/blob/main/server/opensandbox_server/services/factory.py",
+      "https://github.com/Coooolfan/onlyboxes"
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@always-on/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./system": {
+      "types": "./dist/system.d.ts",
+      "import": "./dist/system.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "dev:types": "tsc --watch --preserveWatchOutput"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  }
+}

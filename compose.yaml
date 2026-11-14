@@ -1,0 +1,35 @@
+name: always-on
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    environment:
+      POSTGRES_USER: always_on
+      POSTGRES_PASSWORD: always_on_local
+      POSTGRES_DB: always_on
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U always_on -d always_on"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:8-alpine}
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:16379:6379"
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres:
+  redis:

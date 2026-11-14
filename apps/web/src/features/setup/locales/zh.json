@@ -1,0 +1,26 @@
+{
+  "breadcrumb": "工作空间 / 初始化",
+  "title": "从这里，开始持续工作。",
+  "description": "让 Agent 接住新的请求，继续已有的工作，并在需要时找到你。",
+  "connection": {
+    "kicker": "连接状态",
+    "title": "准备你的工作空间",
+    "state": {
+      "checking": "正在检查",
+      "failed": "连接中断",
+      "ready": "连接就绪",
+      "waiting": "等待服务"
+    },
+    "platform": "平台服务",
+    "history": "工作记录",
+    "scheduling": "后台调度",
+    "connected": "已连接",
+    "ready": "已就绪",
+    "available": "连接可用",
+    "waiting": "等待连接",
+    "description": "当前已搭建基础连接。Agent 执行、本地接入与云端沙箱将在后续接入。",
+    "refresh": "重新检查",
+    "error": "服务暂时无法连接。确认后端已经启动，再重新检查。"
+  },
+  "workspaceNote": "本地原生运行 · 云端隔离环境 · 同一个工作空间"
+}

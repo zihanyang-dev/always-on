@@ -1,0 +1,32 @@
+{
+  "name": "@always-on/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "dev:types": "tsc --watch --preserveWatchOutput",
+    "dev:api": "node --env-file=../../.env.local --watch dist/bootstrap/api.js",
+    "dev:worker": "node --env-file=../../.env.local --watch dist/bootstrap/worker.js",
+    "start:api": "node dist/bootstrap/api.js",
+    "start:worker": "node dist/bootstrap/worker.js",
+    "db:generate": "node --env-file=../../.env.local node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "node --env-file=../../.env.local dist/bootstrap/migrate.js"
+  },
+  "dependencies": {
+    "@always-on/contracts": "workspace:*",
+    "@hono/node-server": "2.1.8",
+    "bullmq": "catalog:",
+    "drizzle-orm": "catalog:",
+    "hono": "4.13.18",
+    "ioredis": "6.0.0",
+    "pg": "8.23.1",
+    "pino": "10.4.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "drizzle-kit": "0.31.11"
+  }
+}
