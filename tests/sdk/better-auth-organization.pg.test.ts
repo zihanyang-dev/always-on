@@ -121,13 +121,10 @@ it('releases a claimed invitation when membership creation fails on PostgreSQL',
       body: { invitationId: invitation.id },
     }),
   ).rejects.toThrow();
-  expect(
-    (
-      await fixture.db.query.invitation.findFirst({
-        where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
-      })
-    )?.status,
-  ).toBe('pending');
+  const stored = await fixture.db.query.invitation.findFirst({
+    where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
+  });
+  expect(stored?.status).toBe('pending');
   expect(await fixture.readMembers()).toEqual([
     expect.objectContaining({ userId: fixture.owner.user.id }),
   ]);

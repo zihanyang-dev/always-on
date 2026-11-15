@@ -58,6 +58,24 @@ test('shows a translated error when the service cannot be reached', async ({ pag
   );
 });
 
+test('recovers from a failed refresh without retaining stale errors', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.getByRole('status')).toHaveText('连接就绪');
+
+  await page.route('**/api/health/ready', (route) => route.abort());
+  await page.getByRole('button', { name: '重新检查' }).click();
+  await expect(page.getByRole('status')).toHaveText('连接中断');
+  await expect(page.getByRole('alert')).toBeVisible();
+
+  await page.unroute('**/api/health/ready');
+  await page.getByRole('button', { name: '重新检查' }).click();
+  await expect(page.getByRole('status')).toHaveText('连接就绪');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test.describe('English browser preference', () => {
   test.use({ locale: 'en-US' });
 

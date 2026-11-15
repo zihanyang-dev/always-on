@@ -1,12 +1,8 @@
-import type { UserProfile } from '@always-on/contracts/users';
 import { Hono } from 'hono';
+import type { GetRequestUser } from '../api/index.js';
 
 /** Exposes only the authenticated user's profile through the identity capability. */
-export function createUserRoutes({
-  getUser,
-}: {
-  getUser: (headers: Headers) => Promise<UserProfile | null>;
-}): Hono {
+export function createUserRoutes({ getUser }: { getUser: GetRequestUser }): Hono {
   const routes = new Hono();
   routes.get('/me', async (ctx) => {
     // Shared caches must not reuse one person's profile after the browser switches accounts.

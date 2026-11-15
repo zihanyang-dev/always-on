@@ -168,9 +168,12 @@ async function openAuthFixture() {
   };
   // Startup owns partial initialization; the returned scope takes over only after it succeeds.
   await using startup = new AsyncDisposableStack();
+  startup.defer(assertNoDependencyFailures);
   const database = startup.use(openDatabase({ url: ENV.DATABASE_URL, onError }));
   const redis = startup.use(openRedis({ url: ENV.REDIS_URL, role: 'api', onError }));
   await redis.client.connect();
+  // Authentication drains before record cleanup, including when its own disposal rejects.
+  startup.defer(deleteRecords);
   const authentication = startup.use(
     createAuthentication({
       db: database.db,
@@ -207,7 +210,7 @@ async function openAuthFixture() {
     readEmail,
     recordOAuthState,
     expectErrors,
-    [Symbol.asyncDispose]: dispose,
+    [Symbol.asyncDispose]: resources.disposeAsync.bind(resources),
   };
 
   function request({
@@ -259,9 +262,7 @@ async function openAuthFixture() {
     expect(response.status).toBe(302);
   }
 
-  async function dispose() {
-    await using _ownedResources = resources;
-    await authentication[Symbol.asyncDispose]();
+  async function deleteRecords() {
     await database.db
       .delete(AUTHENTICATION_TABLES.user)
       .where(eq(AUTHENTICATION_TABLES.user.email, email));
@@ -271,6 +272,9 @@ async function openAuthFixture() {
         .where(inArray(AUTHENTICATION_TABLES.verification.identifier, verificationIds));
     const keys = await redis.client.keys(`${prefix}:*`);
     if (keys.length > 0) await redis.client.del(...keys);
+  }
+
+  function assertNoDependencyFailures() {
     if (errors.length > 0)
       throw new AggregateError(errors, 'Authentication fixture dependencies failed');
   }

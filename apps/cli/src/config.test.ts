@@ -27,26 +27,19 @@ it('resolves explicit URL before environment and saved preferences', async () =>
       homeDirectory: directory,
       platform: 'linux',
     } as const;
-    expect(
-      (
-        await loadCliConfig({
-          ...options,
-          serverUrl: 'https://explicit.example',
-        })
-      ).serverUrl,
-    ).toBe('https://explicit.example');
-    expect((await loadCliConfig({ ...options, serverUrl: undefined })).serverUrl).toBe(
-      'https://environment.example',
-    );
-    expect(
-      (
-        await loadCliConfig({
-          ...options,
-          environment: { ALWAYS_ON_CONFIG: configPath },
-          serverUrl: undefined,
-        })
-      ).serverUrl,
-    ).toBe('https://saved.example');
+    const [explicit, environment, saved] = await Promise.all([
+      loadCliConfig({ ...options, serverUrl: 'https://explicit.example' }),
+      loadCliConfig({ ...options, serverUrl: undefined }),
+      loadCliConfig({
+        ...options,
+        environment: { ALWAYS_ON_CONFIG: configPath },
+        serverUrl: undefined,
+      }),
+    ]);
+
+    expect(explicit.serverUrl).toBe('https://explicit.example');
+    expect(environment.serverUrl).toBe('https://environment.example');
+    expect(saved.serverUrl).toBe('https://saved.example');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

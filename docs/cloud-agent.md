@@ -76,6 +76,8 @@ Redis 保存约 2,000 条事件，最后一次写入后保留两小时。每个�
 
 update 包含 message、run 或 tool。草稿消息采用同 message.id 的累计文本替换，不是可重复拼接的 delta。客户端须按消息 ID 合并，completed/interrupted 不得被回放的 pending 覆盖；两份 pending 合并时保留较长的累计文本，PG 快照不能清空已观察到的草稿；Run 按 ID 合并，终态不得被旧 running 覆盖。工具进度只是短期观测。快照之后仍可能回放旧事件，因此这些规则是接口约束。
 
+消息与 Run 载荷中的 Session ID 必须匹配当前订阅，归属不符的事件不会交付，订阅报告 unavailable 后结束。工具进度只携带 Run ID，依赖发布者将其写入该 Run 所属 Session 的流。
+
 当前累计草稿方式便于补流，长文本的传输总量会增加，尚未做规模压测或消息分页。Redis 不是永久消息历史；PG 保存确认边界，未确认草稿可能在进程崩溃时丢失。access_revoked 结束订阅，unavailable 表示依赖失败，应重新连接并对账。
 
 ## 配置、启动与验证

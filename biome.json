@@ -56,7 +56,13 @@
       },
       "suspicious": {
         "noExplicitAny": "error",
-        "noTsIgnore": "error"
+        "noTsIgnore": "error",
+        "noImportCycles": {
+          "level": "error",
+          "options": {
+            "ignoreTypes": false
+          }
+        }
       },
       "preset": "recommended"
     }

@@ -198,25 +198,35 @@ it('fences an expired writer and quarantines its Session instead of replaying it
   expect((await fixture.submit('second')).status).toBe('recovery_required');
 });
 
-it('preserves unknown tool outcomes even when the SDK reports completion', async () => {
-  await using fixture = await openSessionFixture();
-  const claim = await fixture.claim('first');
-  await startRunTool({ db: fixture.db, claim, tool: { id: randomUUID(), name: 'bash' } });
-  await completeRun({
-    db: fixture.db,
-    claim,
-    completion: {
-      status: 'completed',
-      checkpoint: { executor: 'fixture', reference: 'uncommitted' },
-    },
-  });
-  expect((await fixture.snapshot())?.run?.status).toBe('recovery_required');
-  const [stored] = await fixture.db
-    .select({ checkpoint: AGENT_SESSIONS.checkpoint })
-    .from(AGENT_SESSIONS)
-    .where(eq(AGENT_SESSIONS.id, fixture.session.id));
-  expect(stored?.checkpoint).toBeNull();
-});
+it.each(['completed', 'cancelled'] as const)(
+  'preserves unknown tool outcomes when the SDK reports %s',
+  async (status) => {
+    await using fixture = await openSessionFixture();
+    const claim = await fixture.claim('first');
+    await startRunTool({ db: fixture.db, claim, tool: { id: randomUUID(), name: 'bash' } });
+    if (status === 'cancelled')
+      await cancelSessionRun({
+        db: fixture.db,
+        sessionId: fixture.session.id,
+        userId: fixture.owner.id,
+        runId: claim.run.id,
+      });
+    await completeRun({
+      db: fixture.db,
+      claim,
+      completion: {
+        status,
+        checkpoint: { executor: 'fixture', reference: 'uncommitted' },
+      },
+    });
+    expect((await fixture.snapshot())?.run?.status).toBe('recovery_required');
+    const [stored] = await fixture.db
+      .select({ checkpoint: AGENT_SESSIONS.checkpoint })
+      .from(AGENT_SESSIONS)
+      .where(eq(AGENT_SESSIONS.id, fixture.session.id));
+    expect(stored?.checkpoint).toBeNull();
+  },
+);
 
 it('does not acknowledge a remote write when only its transport was cancelled', async () => {
   await using fixture = await openSessionFixture();
@@ -324,16 +334,13 @@ it('persists queued cancellation without invoking a Runner', async () => {
   await using fixture = await openSessionFixture();
   const admitted = await fixture.submit('first');
   assert.ok(admitted.status === 'accepted');
-  expect(
-    (
-      await cancelSessionRun({
-        db: fixture.db,
-        sessionId: fixture.session.id,
-        userId: fixture.owner.id,
-        runId: admitted.run.id,
-      })
-    )?.status,
-  ).toBe('cancelled');
+  const cancelled = await cancelSessionRun({
+    db: fixture.db,
+    sessionId: fixture.session.id,
+    userId: fixture.owner.id,
+    runId: admitted.run.id,
+  });
+  expect(cancelled?.status).toBe('cancelled');
   expect(
     await claimRun({ db: fixture.db, runId: admitted.run.id, ownerToken: randomUUID() }),
   ).toBeNull();

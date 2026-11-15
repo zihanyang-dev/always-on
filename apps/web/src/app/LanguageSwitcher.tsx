@@ -1,6 +1,6 @@
 import { type ChangeEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { isSupportedLanguage, SUPPORTED_LANGUAGES } from './i18n.js';
+import { isSupportedLanguage, type Language, SUPPORTED_LANGUAGES } from './i18n.js';
 
 /** Changes the UI language through i18next, which owns detection and preference persistence. */
 export function LanguageSwitcher() {
@@ -29,14 +29,19 @@ export function LanguageSwitcher() {
     const selected = event.currentTarget.value;
     if (!isSupportedLanguage(selected)) return;
 
-    setFailure(undefined);
-    void i18n.changeLanguage(selected).catch(handleFailure);
+    void changeLanguage(selected);
   }
 
-  function handleFailure(error: unknown) {
-    // Keep the original failure while presenting a translated, stable message to the user.
-    setFailure(
-      error instanceof Error ? error : new Error('Language change failed', { cause: error }),
-    );
+  async function changeLanguage(language: Language) {
+    setFailure(undefined);
+
+    try {
+      await i18n.changeLanguage(language);
+    } catch (error) {
+      // Keep the original failure while presenting a translated, stable message to the user.
+      setFailure(
+        error instanceof Error ? error : new Error('Language change failed', { cause: error }),
+      );
+    }
   }
 }

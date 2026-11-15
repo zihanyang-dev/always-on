@@ -177,24 +177,16 @@ export async function completeRun({
 
   async function complete(transaction: DatabaseTransaction): Promise<AgentRun> {
     const access = await readRunAuthority(transaction, claim);
-    const shouldCancel = access.status === 'cancel_requested';
-    // A committed cancellation wins a race with an otherwise successful model response.
-    const outcome =
-      shouldCancel && completion.status === 'completed'
-        ? { ...completion, status: 'cancelled' as const }
-        : completion;
-    // SDK success cannot confirm an external effect whose receipt is still pending.
     const [pending] = await transaction
       .select({ id: AGENT_TOOL_CALLS.id })
       .from(AGENT_TOOL_CALLS)
       .where(and(eq(AGENT_TOOL_CALLS.runId, claim.run.id), eq(AGENT_TOOL_CALLS.status, 'pending')))
       .limit(1);
-    const result = pending
-      ? {
-          status: 'recovery_required' as const,
-          error: `Tool ${pending.id} has no acknowledged result`,
-        }
-      : outcome;
+    const result = resolveRunCompletion({
+      completion,
+      pendingToolId: pending?.id,
+      shouldCancel: access.status === 'cancel_requested',
+    });
 
     const [updated] = await transaction
       .update(AGENT_RUNS)
@@ -224,4 +216,26 @@ export async function completeRun({
 
     return parseRun(updated);
   }
+}
+
+function resolveRunCompletion({
+  completion,
+  pendingToolId,
+  shouldCancel,
+}: {
+  completion: RunCompletion;
+  pendingToolId: string | undefined;
+  shouldCancel: boolean;
+}) {
+  // An unconfirmed effect takes precedence over both SDK success and committed cancellation.
+  if (pendingToolId)
+    return {
+      status: 'recovery_required' as const,
+      error: `Tool ${pendingToolId} has no acknowledged result`,
+    };
+  // A committed cancellation wins a race with an otherwise successful model response.
+  if (shouldCancel && completion.status === 'completed')
+    return { ...completion, status: 'cancelled' as const };
+
+  return completion;
 }

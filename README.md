@@ -37,9 +37,9 @@ pnpm cli agents --json
 
 集成测试需要已迁移的 PG 和 Redis。浏览器测试自行启动 API 与 Web，使用独立测试进程；运行前释放本项目的 `3001` 和 `5173` 端口。CLI 命令使用已构建产物，修改后运行 `pnpm build`。
 
-`pnpm check` 使用 Biome 和 TypeScript。生产代码的环境变量只能在配置入口读取；浏览器源码禁止导入 Node 运行时模块和 Agent 执行包。默认导出仅对框架配置文件开放。职责划分、注释准确性和函数可读性仍需人工审查，详见[本轮整理记录](docs/reviews/codebase-style-2026-11-15.md)。
+`pnpm check` 使用 Biome 和 TypeScript，检查循环依赖时包含纯类型导入。生产代码的环境变量只能在配置入口读取；浏览器源码禁止导入 Node 运行时模块和 Agent 执行包。默认导出仅对框架配置文件开放。职责划分、注释准确性和函数可读性仍需人工审查，详见[本轮整理记录](docs/reviews/codebase-style-2026-11-15.md)。
 
-`db:generate` 生成迁移；`db:migrate` 应用已提交迁移。生产迁移单独执行，API/Worker 启动不会抢跑迁移。CI 在 PR 和 push 时执行检查、单元测试、构建、真实基础设施测试与桌面/移动浏览器测试，不发布部署。
+`db:generate` 生成迁移；`db:migrate` 应用已提交迁移。CI 会检查迁移变化，包括新生成的未跟踪文件。生产迁移单独执行，API/Worker 启动不会抢跑迁移。CI 在 PR 和 push 时执行检查、单元测试、构建、真实基础设施测试与桌面/移动浏览器测试，不发布部署。
 
 ## 已实现与下一步
 

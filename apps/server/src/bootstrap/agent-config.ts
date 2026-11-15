@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import type { ModelConnection } from '@always-on/agent-runtime/pi';
 import { z } from 'zod';
 
 const ENVIRONMENT_SOURCE_SCHEMA = z
@@ -10,28 +11,27 @@ const PROVIDER_SCHEMA = z.object({
   credentialEnvironmentKey: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
   baseUrl: z.url({ protocol: /^https?$/ }).optional(),
 });
-const CLOUD_AGENT_INPUT_SCHEMA = z.object({
-  directory: z.string().refine(isAbsolute, 'Use an absolute Agent state directory'),
-  connections: z
-    .array(
-      z.object({
-        provider: z.string(),
-        apiKey: z.string().min(1),
-        baseUrl: z.url({ protocol: /^https?$/ }).optional(),
-      }),
-    )
-    .min(1),
-  defaultModel: z.object({ provider: z.string().min(1), id: z.string().min(1) }),
-  sandbox: z.object({
+const SANDBOX_CONNECTION_SCHEMA = z
+  .object({
     apiKey: z.string().min(1),
     apiUrl: z.url({ protocol: /^https?$/ }).optional(),
     sandboxUrl: z.url({ protocol: /^https?$/ }).optional(),
-  }),
+  })
+  .transform(({ apiKey, apiUrl, sandboxUrl }) => ({
+    apiKey,
+    ...(apiUrl ? { apiUrl } : {}),
+    ...(sandboxUrl ? { sandboxUrl } : {}),
+  }));
+const CLOUD_AGENT_SCHEMA = z.object({
+  directory: z.string().refine(isAbsolute, 'Use an absolute Agent state directory'),
+  defaultModel: z.object({ provider: z.string().min(1), id: z.string().min(1) }),
+  sandbox: SANDBOX_CONNECTION_SCHEMA,
 });
-const CLOUD_AGENT_SCHEMA = CLOUD_AGENT_INPUT_SCHEMA.transform(normalizeCloudConfiguration);
 
 /** Deployment-owned credentials and storage, separate from user-selected Agent settings. */
-export type CloudAgentConfiguration = z.infer<typeof CLOUD_AGENT_SCHEMA>;
+export interface CloudAgentConfiguration extends z.infer<typeof CLOUD_AGENT_SCHEMA> {
+  readonly connections: readonly ModelConnection[];
+}
 
 /** Resolves provider credential references once at the process configuration boundary. */
 export function parseCloudAgentConfiguration(input: unknown): CloudAgentConfiguration | null {
@@ -57,7 +57,6 @@ export function parseCloudAgentConfiguration(input: unknown): CloudAgentConfigur
 
   const result = CLOUD_AGENT_SCHEMA.safeParse({
     directory: environment.AGENT_SESSION_DIRECTORY,
-    connections,
     defaultModel: {
       provider: environment.DEFAULT_MODEL_PROVIDER ?? 'deepseek',
       id: environment.DEFAULT_MODEL_ID ?? 'deepseek-flash',
@@ -68,7 +67,7 @@ export function parseCloudAgentConfiguration(input: unknown): CloudAgentConfigur
       ...(environment.E2B_SANDBOX_URL ? { sandboxUrl: environment.E2B_SANDBOX_URL } : {}),
     },
   });
-  if (result.success) return result.data;
+  if (result.success) return { ...result.data, connections };
 
   // Values may be credentials; report only configuration field names.
   const fields = result.error.issues.map((issue) => issue.path.join('.'));
@@ -82,6 +81,7 @@ function readProviders(serialized: string | undefined) {
   try {
     input = JSON.parse(serialized);
   } catch {
+    // JSON syntax errors quote raw input, which may accidentally contain credentials.
     throw new Error('MODEL_PROVIDERS must contain a JSON array');
   }
   const result = z.array(PROVIDER_SCHEMA).min(1).max(20).safeParse(input);
@@ -91,20 +91,4 @@ function readProviders(serialized: string | undefined) {
   if (identities.size !== result.data.length) throw new Error('MODEL_PROVIDERS repeats a provider');
 
   return result.data;
-}
-
-function normalizeCloudConfiguration(config: z.infer<typeof CLOUD_AGENT_INPUT_SCHEMA>) {
-  const connections = config.connections.map(({ provider, apiKey, baseUrl }) => ({
-    provider,
-    apiKey,
-    ...(baseUrl ? { baseUrl } : {}),
-  }));
-  const { apiKey, apiUrl, sandboxUrl } = config.sandbox;
-  const sandbox = {
-    apiKey,
-    ...(apiUrl ? { apiUrl } : {}),
-    ...(sandboxUrl ? { sandboxUrl } : {}),
-  };
-
-  return { ...config, connections, sandbox };
 }

@@ -24,7 +24,7 @@ const API_ENV_SCHEMA = COMMON_ENV_SCHEMA.extend({
   GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
   RESEND_API_KEY: z.string().min(1).optional(),
   EMAIL_FROM: EMAIL_FROM_SCHEMA.default('Always On <onboarding@resend.dev>'),
-}).superRefine(validateAuthenticationEnv);
+});
 const WORKER_ENV_SCHEMA = COMMON_ENV_SCHEMA.extend({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(100).default(4),
 });
@@ -40,43 +40,9 @@ export interface WorkerEnv extends z.infer<typeof WORKER_ENV_SCHEMA> {
 /** Deployment variables required by a database migration. */
 export type DatabaseEnv = z.infer<typeof DATABASE_ENV_SCHEMA>;
 
-function validateAuthenticationEnv(
-  env: {
-    NODE_ENV: string;
-    BETTER_AUTH_URL: string;
-    GOOGLE_CLIENT_ID?: string | undefined;
-    GOOGLE_CLIENT_SECRET?: string | undefined;
-    GITHUB_CLIENT_ID?: string | undefined;
-    GITHUB_CLIENT_SECRET?: string | undefined;
-  },
-  context: z.RefinementCtx,
-) {
-  // Incomplete pairs must fail at startup rather than leave a visible but unusable login method.
-  const pairs = [
-    ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
-    ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'],
-  ] as const;
-
-  for (const [clientId, clientSecret] of pairs) {
-    if (Boolean(env[clientId]) === Boolean(env[clientSecret])) continue;
-
-    context.addIssue({
-      code: 'custom',
-      path: [clientId],
-      message: `Configure ${clientId} and ${clientSecret} together`,
-    });
-  }
-  if (env.NODE_ENV === 'production' && new URL(env.BETTER_AUTH_URL).protocol !== 'https:')
-    context.addIssue({
-      code: 'custom',
-      path: ['BETTER_AUTH_URL'],
-      message: 'Production authentication requires HTTPS',
-    });
-}
-
 /** Parses API configuration once at process startup, without reporting secret values. */
 export function parseApiEnv(input: unknown): ApiEnv {
-  const result = API_ENV_SCHEMA.safeParse(input);
+  const result = API_ENV_SCHEMA.superRefine(validateAuthenticationEnv).safeParse(input);
   if (result.success) return { ...result.data, cloudAgent: parseCloudAgentConfiguration(input) };
 
   throwConfigurationError({ role: 'API', issues: result.error.issues });
@@ -96,6 +62,31 @@ export function parseDatabaseEnv(input: unknown): DatabaseEnv {
   if (result.success) return result.data;
 
   throwConfigurationError({ role: 'database', issues: result.error.issues });
+}
+
+function validateAuthenticationEnv(env: z.infer<typeof API_ENV_SCHEMA>, context: z.RefinementCtx) {
+  // Incomplete pairs must fail at startup rather than leave a visible but unusable login method.
+  const pairs = [
+    ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+    ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'],
+  ] as const;
+
+  for (const [clientId, clientSecret] of pairs) {
+    if (Boolean(env[clientId]) === Boolean(env[clientSecret])) continue;
+
+    context.addIssue({
+      code: 'custom',
+      path: [clientId],
+      message: `Configure ${clientId} and ${clientSecret} together`,
+    });
+  }
+
+  if (env.NODE_ENV === 'production' && new URL(env.BETTER_AUTH_URL).protocol !== 'https:')
+    context.addIssue({
+      code: 'custom',
+      path: ['BETTER_AUTH_URL'],
+      message: 'Production authentication requires HTTPS',
+    });
 }
 
 function throwConfigurationError({

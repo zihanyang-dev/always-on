@@ -409,38 +409,33 @@ function writeChunk(
   delta: Record<string, unknown>,
   finishReason: 'stop' | 'tool_calls' | null,
 ) {
-  response.write(
-    `data: ${JSON.stringify({
-      id: 'completion-fixture',
-      object: 'chat.completion.chunk',
-      model: 'deepseek-flash',
-      created: 0,
-      choices: [{ index: 0, delta, finish_reason: finishReason }],
-    })}\n\n`,
-  );
+  const chunk = {
+    id: 'completion-fixture',
+    object: 'chat.completion.chunk',
+    model: 'deepseek-flash',
+    created: 0,
+    choices: [{ index: 0, delta, finish_reason: finishReason }],
+  };
+  response.write(`data: ${JSON.stringify(chunk)}\n\n`);
 }
 
-async function openBashFixture(command: string) {
+function openBashFixture(command: string) {
   let didRequestTool = false;
-  return openModelFixture((response) => {
+
+  return openModelFixture(respondToRequest);
+
+  function respondToRequest(response: ServerResponse) {
     if (didRequestTool) return finishReply(response);
+
     didRequestTool = true;
+    const toolCall = {
+      index: 0,
+      id: 'remote-command',
+      type: 'function',
+      function: { name: 'bash', arguments: JSON.stringify({ command }) },
+    };
     response.writeHead(200, { 'content-type': 'text/event-stream' });
-    writeChunk(
-      response,
-      {
-        role: 'assistant',
-        tool_calls: [
-          {
-            index: 0,
-            id: 'remote-command',
-            type: 'function',
-            function: { name: 'bash', arguments: JSON.stringify({ command }) },
-          },
-        ],
-      },
-      'tool_calls',
-    );
+    writeChunk(response, { role: 'assistant', tool_calls: [toolCall] }, 'tool_calls');
     response.end('data: [DONE]\n\n');
-  });
+  }
 }

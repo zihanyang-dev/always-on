@@ -109,13 +109,13 @@ export function createAuthentication({
 
   return { methods, handle, getUser, [Symbol.asyncDispose]: dispose };
 
-  async function handle({ request, clientIp }: { request: Request; clientIp: string | undefined }) {
+  function handle({ request, clientIp }: { request: Request; clientIp: string | undefined }) {
     const headers = new Headers(request.headers);
     // Only the server's socket address may supply this header; discard client-supplied values.
     headers.delete(CLIENT_IP_HEADER);
     if (clientIp) headers.set(CLIENT_IP_HEADER, clientIp);
 
-    return await auth.handler(new Request(request, { headers }));
+    return auth.handler(new Request(request, { headers }));
   }
 
   async function getUser(headers: Headers) {

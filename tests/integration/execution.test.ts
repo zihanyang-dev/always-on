@@ -183,6 +183,35 @@ it('leaves a Run alive after browser disconnect and cancels only on the explicit
   expect(signal.aborted).toBe(true);
 });
 
+it.each(['message', 'run'] as const)(
+  'rejects a foreign Session %s in its real Redis subscription',
+  async (type) => {
+    await using fixture = await openExecutionFixture();
+    await using stream = await fixture.openStream();
+    await stream.next('snapshot');
+    const sessionId = randomUUID();
+    const run = { id: randomUUID(), sessionId, createdAt: new Date().toISOString() };
+    const message = {
+      id: randomUUID(),
+      sessionId,
+      runId: run.id,
+      role: 'assistant' as const,
+      state: 'completed' as const,
+      text: 'A different conversation',
+      position: 1,
+    };
+
+    await fixture.publishEvent(
+      type === 'message' ? { type, message } : { type, run: { ...run, status: 'queued' } },
+    );
+    const unavailable = await stream.next('unavailable');
+    expect(unavailable.value).toEqual({ code: 'stream_unavailable' });
+    fixture.expectErrors([
+      `Session ${fixture.sessionId} stream contains an event from another session`,
+    ]);
+  },
+);
+
 it('stops delivering a subscription after current membership is revoked', async () => {
   await using fixture = await openExecutionFixture();
   await using stream = await fixture.openStream();

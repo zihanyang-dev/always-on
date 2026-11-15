@@ -148,6 +148,7 @@ export async function submitSessionMessage({
 
     const repeated = await readRepeatedSubmission({ transaction, sessionId, input });
     if (repeated) return repeated;
+
     // Retries keep their original identity, even after a later Run requires recovery.
     if (await hasUncertainRun(transaction, sessionId)) return { status: 'recovery_required' };
 

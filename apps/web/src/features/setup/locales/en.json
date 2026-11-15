@@ -18,7 +18,7 @@
     "ready": "Ready",
     "available": "Connection available",
     "waiting": "Waiting for connection",
-    "description": "Basic connections are in place. Agent execution, local connections, and cloud sandboxes will be added next.",
+    "description": "Use this page to check platform connections. Sign-in, workspace management, and Agent controls will be added to the interface.",
     "refresh": "Check again",
     "error": "We couldn't connect to the service. Start the backend, then check again."
   },

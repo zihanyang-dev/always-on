@@ -67,13 +67,10 @@ describe('workspace identity and isolation', () => {
     expect(ERROR_SCHEMA.parse(await forgedActor.json()).code).toBe(
       'USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION',
     );
-    expect(
-      (
-        await fixture.db.query.organization.findFirst({
-          where: eq(WORKSPACE_TABLES.organization.id, workspace.id),
-        })
-      )?.name,
-    ).toBe('identity');
+    const savedWorkspace = await fixture.db.query.organization.findFirst({
+      where: eq(WORKSPACE_TABLES.organization.id, workspace.id),
+    });
+    expect(savedWorkspace?.name).toBe('identity');
   });
 
   it('checks explicit workspace membership even when another workspace is active', async () => {
@@ -303,13 +300,10 @@ describe('workspace invitations', () => {
     expect(stored.expiresAt.getTime()).toBeLessThanOrEqual(acknowledgedAtMs + validityMs);
     const details = await fixture.request({ path: link, actor: recipient, method: 'GET' });
     expect(details.status).toBe(200);
-    expect(
-      (
-        await fixture.db.query.invitation.findFirst({
-          where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
-        })
-      )?.status,
-    ).toBe('pending');
+    const reviewed = await fixture.db.query.invitation.findFirst({
+      where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
+    });
+    expect(reviewed?.status).toBe('pending');
     const wrongRecipient = await fixture.request({
       path: '/api/auth/organization/accept-invitation',
       actor: stranger,
@@ -368,13 +362,10 @@ describe('workspace invitations', () => {
     expect(ERROR_SCHEMA.parse(await accept.json()).code).toBe(
       'EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION',
     );
-    expect(
-      (
-        await fixture.db.query.invitation.findFirst({
-          where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
-        })
-      )?.status,
-    ).toBe('pending');
+    const stored = await fixture.db.query.invitation.findFirst({
+      where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
+    });
+    expect(stored?.status).toBe('pending');
   });
 
   it('supports cancellation, rejection, expiration and explicit resend without granting membership', async () => {

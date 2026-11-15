@@ -5,7 +5,7 @@ import { AUTHENTICATION_TABLES } from './authentication-schema.js';
 import { INBOX_EVENTS } from './schema.js';
 import { WORKSPACE_TABLES } from './workspace-schema.js';
 
-/** One model catalogue shared by Drizzle and the authentication adapter. */
+/** One table schema shared by Drizzle and the authentication adapter. */
 export const DATABASE_SCHEMA = {
   ...AUTHENTICATION_TABLES,
   ...WORKSPACE_TABLES,

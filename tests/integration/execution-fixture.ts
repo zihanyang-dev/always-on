@@ -5,6 +5,7 @@ import {
   AGENT_SCHEMA,
   AGENT_SESSION_SCHEMA,
   SESSION_SNAPSHOT_SCHEMA,
+  type SessionEvent,
   type SessionSnapshot,
 } from '@always-on/contracts/agents';
 import type { ModelCatalog } from '@always-on/contracts/models';
@@ -35,6 +36,7 @@ interface ExecutionFixture extends AsyncDisposable {
   readonly submit: (input?: MessageInput) => Promise<z.infer<typeof SUBMISSION_SCHEMA>>;
   readonly snapshot: () => Promise<SessionSnapshot>;
   readonly openStream: (cursor?: string) => Promise<SessionStreamFixture>;
+  readonly publishEvent: (event: SessionEvent) => Promise<void>;
   readonly startWorker: WorkspaceFixture['startWorker'];
   readonly expectErrors: WorkspaceFixture['expectErrors'];
 }
@@ -102,6 +104,7 @@ export async function openExecutionFixture(
     submit,
     snapshot,
     openStream: (cursor) => openSessionStream({ request, sessionId: session.id, cursor }),
+    publishEvent: (event) => fixture.publishEvent({ sessionId: session.id, event }),
     startWorker: fixture.startWorker,
     expectErrors: fixture.expectErrors,
     [Symbol.asyncDispose]: resources.disposeAsync.bind(resources),
@@ -182,7 +185,11 @@ async function openSessionStream({
 
   async function dispose() {
     cancellation.abort();
-    await reader.cancel();
-    reader.releaseLock();
+
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
   }
 }

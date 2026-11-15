@@ -115,9 +115,12 @@ export async function openSessionEventReader({
 
     const input: unknown = JSON.parse(serialized);
     const event = SESSION_EVENT_SCHEMA.parse(input);
-    const eventSessionId = event.type === 'message' ? event.message.sessionId : undefined;
-    if (eventSessionId && eventSessionId !== sessionId)
-      throw new Error(`Session ${sessionId} stream contains a message from another session`);
+    // Tool progress carries only a Run ID; message and Run payloads also identify their Session.
+    if (event.type === 'tool') return { id, event };
+
+    const eventSessionId = event.type === 'message' ? event.message.sessionId : event.run.sessionId;
+    if (eventSessionId !== sessionId)
+      throw new Error(`Session ${sessionId} stream contains an event from another session`);
 
     return { id, event };
   }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { IncomingMessage } from 'node:http';
 import { Socket } from 'node:net';
+import type { SessionEvent } from '@always-on/contracts/agents';
 import type { ModelCatalog } from '@always-on/contracts/models';
 import { convertSetCookieToCookie } from 'better-auth/test';
 import { eq, inArray } from 'drizzle-orm';
@@ -25,6 +26,7 @@ import {
 } from '../../apps/server/src/infrastructure/database/index.js';
 import type { EmailMessage } from '../../apps/server/src/infrastructure/email/index.js';
 import { openRedis } from '../../apps/server/src/infrastructure/redis/index.js';
+import { publishSessionEvent } from '../../apps/server/src/sessions/index.js';
 import {
   type AgentWorkerResource,
   openAgentWorker,
@@ -64,6 +66,7 @@ export type WorkspaceRequest = {
 /** Application dependencies and identities owned by a workspace integration scenario. */
 export interface WorkspaceFixture extends AsyncDisposable {
   readonly db: Database;
+  readonly publishEvent: (input: { sessionId: string; event: SessionEvent }) => Promise<void>;
   readonly startWorker: (
     execute: RunExecutor,
     options?: WorkerOptions,
@@ -156,6 +159,7 @@ export async function openWorkspaceFixture({
   const resources = startup.move();
   return {
     db: database.db,
+    publishEvent: (input) => publishSessionEvent({ redis: redis.client, prefix, ...input }),
     startWorker,
     request,
     createActor,

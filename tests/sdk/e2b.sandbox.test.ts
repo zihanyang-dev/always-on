@@ -65,7 +65,6 @@ it('bounds an untrusted file download before buffering its complete contents', a
   const [download] = await Promise.allSettled([
     workspace.readFile(`${workspace.directory}/oversized.bin`),
   ]);
-  expect(download.status).toBe('rejected');
   assert.ok(download.status === 'rejected');
   assert.ok(download.reason instanceof Error);
   expect(download.reason.message).toContain('exceeds the 20 MiB read limit');

@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getReadiness, PUBLIC_CONFIG_QUERY } from '../../shared/api-client.js';
 
@@ -13,7 +12,6 @@ const CONNECTION_STATES = {
 /** Shows the bootstrap connection state without presenting unimplemented actions. */
 export function SetupPage() {
   const { t } = useTranslation('setup');
-  const [refreshError, setRefreshError] = useState<Error | undefined>();
   const config = useQuery(PUBLIC_CONFIG_QUERY);
   const readiness = useQuery({
     queryKey: ['readiness'],
@@ -24,7 +22,7 @@ export function SetupPage() {
   const connection = getConnectionState({
     isReady: readiness.data?.status === 'ready',
     isPending: config.isPending || readiness.isPending,
-    hasError: config.isError || readiness.isError || refreshError !== undefined,
+    hasError: config.isError || readiness.isError,
   });
 
   return (
@@ -93,14 +91,11 @@ export function SetupPage() {
   );
 
   function refreshConnection() {
-    setRefreshError(undefined);
-    void Promise.all([config.refetch(), readiness.refetch()]).catch(handleRefreshError);
-  }
-
-  function handleRefreshError(error: unknown) {
-    setRefreshError(
-      error instanceof Error ? error : new Error('Connection refresh failed', { cause: error }),
-    );
+    // Query observers publish failures through isError; refetch resolves with that result.
+    void Promise.all([
+      config.refetch({ throwOnError: false }),
+      readiness.refetch({ throwOnError: false }),
+    ]);
   }
 }
 

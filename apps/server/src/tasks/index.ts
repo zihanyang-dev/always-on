@@ -1,7 +1,6 @@
-export { executeQueuedRun, type RunExecutor } from './execute.js';
+export type { RunExecutor } from './execute.js';
 export {
   claimRun,
-  listQueuedRuns,
   type RunClaim,
   type RunToolAccess,
   recoverExpiredRuns,
