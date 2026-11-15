@@ -1,4 +1,5 @@
 references/
+.local/
 node_modules/
 dist/
 coverage/

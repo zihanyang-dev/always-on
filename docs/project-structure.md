@@ -1,6 +1,6 @@
 # 项目目录与配置管理
 
-日期：2026-11-14。状态：目录、工具链和可运行工程骨架已搭建；未实现的业务模块以 README 标明职责。基础设施沿用已确认的 PostgreSQL、Redis + BullMQ、Redis Streams；Pi 和默认云端沙箱仍待验证。
+日期：2026-11-15。状态：目录、工具链、用户/Workspace 与云端 Agent 后端已实现。完整 Pi SDK 与默认 E2B 已通过本机真实链路验证；未实现的模块仍以 README 标明范围。
 
 本文细化 [架构总览](architecture.md) 的工程组织。选型沿用 React + Vite 控制台、Hono 后端和 Zod 契约的提案。“干净”的判断标准是：修改一个行为时容易找到它；配置有明确来源；执行与资源生命周期有明确所有者。目录数量与抽象层数不是验收标准。
 
@@ -27,9 +27,11 @@ always-on/
 │   │   │   │   ├── api.ts               # HTTP 入口与进程生命周期
 │   │   │   │   ├── worker.ts            # 队列、扫描、投递入口
 │   │   │   │   └── env.ts               # 按入口解析部署环境变量
-│   │   │   ├── agents/                 # 配置、记忆、工具授权
+│   │   │   ├── api/                    # 已共享的认证入口与边界校验
+│   │   │   ├── workspaces/             # 人类协作、成员、邀请与 RBAC
+│   │   │   ├── agents/                 # 定义、可见性与模型选择
 │   │   │   ├── sessions/               # 会话、消息、Inbox
-│   │   │   ├── tasks/                  # Router、任务、Run、Timers、审批
+│   │   │   ├── tasks/                  # Run 领取、执行、租约、工具回执
 │   │   │   ├── devices/                # CLI 设备身份、连接与派发
 │   │   │   ├── channels/               # 外部来源、Outbox、送达
 │   │   │   ├── sandbox/                # 环境绑定、生命周期、provider
@@ -72,11 +74,11 @@ always-on/
 └── AGENTS.md
 ```
 
-这是职责图。按用户要求，server 功能目录已创建，暂未实现的模块放置职责说明；不预制空壳业务 API。`tests` 子目录、provider 和适配器只在有实际实现或研究用例时创建。`AGENTS.md` 继续只保留现有的简短约定与完整 TypeScript 指南链接。
+这是职责图，Web 业务功能、设备、渠道、对象存储和凭据管理尚未实现；部分目录只有职责说明。bootstrap/cloud-agent.ts 组合具体 SDK 与业务工具；agent-runtime/pi 集中 SDK 事件、原生会话和远端工具；sandbox/e2b.ts、command.ts 集中官方沙箱协议与命令生命周期。`tests` 子目录、provider 和适配器只在有实际实现或研究用例时创建。`AGENTS.md` 继续只保留现有的简短约定与完整 TypeScript 指南链接。
 
 ### 功能放在一起，进程在入口组装
 
-例如 `tasks/` 初期可以包含 `index.ts`、`routes.ts`、`task.ts`、`task-store.ts`、`routing.ts`、`timers.ts` 和相邻行为测试。它们分别集中公开入口、HTTP 解析、任务规则与编排、事务、路由判断和到期规则。文件按实际职责增长，不强制每个功能都有相同文件集合。
+当前 tasks/ 包含公开入口、ownership.ts、store.ts、execute.ts、worker.ts、workspace.ts、output.ts，分别集中执行所有权、持久提交、执行编排、队列生命周期、工具授权与回执、展示投影。Router、Timers 按实际业务增长。文件按实际职责增长，不强制每个功能都有相同文件集合。
 
 HTTP handler 与队列 handler 都调用所属功能的入口。事务、锁、条件提交与执行所有权集中在该功能的存储操作中；路由层不拼装数据库操作来完成原子命令。`task-store.ts` 是具体实现，不再套一层只有一个实现的通用 Repository。
 
@@ -86,7 +88,7 @@ HTTP handler 与队列 handler 都调用所属功能的入口。事务、锁、�
 
 ### 只有实际共享的能力成为 package
 
-- `contracts`：HTTP、设备命令、运行事件的 Zod schema 与推导类型。按 `tasks`、`sessions`、`execution` 等功能提供明确子路径；不包含数据库表、SDK 对象、启动 env 或所有内部类型。
+- `contracts`：HTTP、设备命令、运行事件的 Zod schema 与推导类型。当前按 `agents`、`models`、`users`、`system` 等功能提供明确子路径；不包含数据库表、SDK 对象、启动 env 或所有内部类型。
 - `agent-runtime`：上游 Pi SDK/RPC、其他 Agent 协议、进程与流的生命周期。后端的受限 Router 和 CLI 执行使用其所需入口。Pi 依赖及升级适配集中在这里；各云端 provider 不复制 Agent loop。
 
 Web 只依赖需要的协议契约；CLI 不导入 server 内部模块；共享包不导入 apps。运行适配需要协议契约时只依赖 `contracts` 的执行部分，不依赖完整任务结构。
@@ -121,24 +123,7 @@ flowchart TD
 
 解析后由 bootstrap 创建 DB、Redis、认证和沙箱等资源，把需要的数据与能力传给功能入口。内部使用含义明确的 camelCase 字段；不向所有函数传一份完整 env。资源创建与优雅停机都由组装入口拥有。
 
-部署变量的初始形状示意如下，密钥占位值需替换，所选 provider 的变量在选型后补入：
-
-```dotenv
-NODE_ENV=development
-BETTER_AUTH_URL=http://localhost:3001
-PORT=3001
-DATABASE_URL=postgresql://always_on:always_on_local@localhost:15432/always_on
-REDIS_URL=redis://localhost:16379
-LOG_LEVEL=info
-WORKER_CONCURRENCY=4
-BETTER_AUTH_SECRET=replace-with-a-generated-secret
-CREDENTIALS_ENCRYPTION_KEY=replace-with-a-generated-key
-S3_ENDPOINT=http://localhost:9000
-S3_REGION=us-east-1
-S3_BUCKET=always-on
-S3_ACCESS_KEY_ID=replace-with-a-local-access-key
-S3_SECRET_ACCESS_KEY=replace-with-a-local-secret-key
-```
+实际字段以根目录 [.env.example](../.env.example) 为准。Agent 部署解析集中在 bootstrap/agent-config.ts：MODEL_PROVIDERS 保存 provider 与密钥环境变量名的对应关系；启动时解析为内存连接。DEEPSEEK_API_KEY 是一期默认连接的快捷配置；模型和推理强度的用户选择保存在 PG，并由 Pi 目录校验。AGENT_SESSION_DIRECTORY 必须是绝对持久目录，API/Worker 共享；E2B_API_KEY 必填，自托管 E2B_API_URL、E2B_SANDBOX_URL 成对设置。
 
 默认值写在拥有该字段的 schema 一处；`.env.example` 说明用途、单位、默认值、适用进程与必填条件。缺失必要配置在启动时报告变量名和规则，不打印输入值。URL、数字范围、时间单位及条件必填均在这里解析；开关使用明确枚举或 Zod `stringbool`，不能用 `Boolean("false")` 语义的 coercion。[Zod](https://zod.dev/api#stringbools)
 
@@ -165,7 +150,7 @@ S3_SECRET_ACCESS_KEY=replace-with-a-local-secret-key
 
 覆盖规则集中在一个具名操作中：应用默认值、已保存设置、明确允许的本次覆盖依次解析，再检查部署上限和授权约束。取消与撤销按实时控制规则处理，不被冻结成永远有效的旧权限。运行记录保存凭据引用，不复制明文密钥。
 
-凭据的存储与解密集中在 credentials 模块，模型、渠道、沙箱模块只获得本次所需身份。后台管理密钥和整份 `process.env` 不传入云端 Agent；给沙箱 CLI 的回传凭据应限定到对应运行。具体隔离与注入能力随 provider 验证。
+后续用户凭据的存储与解密由 credentials 模块集中负责，当前仅有部署密钥，尚无用户密钥保存接口；模型、渠道、沙箱模块只获得本次所需身份。后台管理密钥和整份 `process.env` 不传入云端 Agent；给沙箱 CLI 的回传凭据应限定到对应运行。具体隔离与注入能力随 provider 验证。
 
 ### CLI 的本机配置
 
@@ -187,4 +172,4 @@ S3_SECRET_ACCESS_KEY=replace-with-a-local-secret-key
 
 先验证两种进程只校验所需配置、未启用 provider 不要求密钥、错误与日志不泄露输入、公开配置仅返回白名单、同一前端构建能用于不同部署。再验证 CLI 优先级、设置修改与已有 Run 的关系、取消及撤销、凭据隔离、共享包在生产 JS 入口下可运行。
 
-当前已落实进程环境解析、公开配置、Web 初始化页、CLI 状态查询和安装检测、PG Inbox 去重、BullMQ/Redis Streams 诊断链路，以及三种登录后端和当前用户接口。认证模块集中 SDK、会话和限流；`users` 拥有用户资料入口。成员和资源授权规则仍归后续业务功能。认证配置与限制见 [接入说明](authentication.md)，其他能力与启动步骤见 [README](../README.md)。CI 覆盖静态检查、构建、单元测试、真实 PG/Redis 集成和桌面/移动视口冒烟。取舍记录见 [ADR-0004](adr/0004-project-layout-and-configuration.md)。
+当前已落实进程环境解析、公开配置、Web 初始化页、CLI 状态查询和安装检测、PG Inbox、认证、Workspace/RBAC，以及完整云端 Session/Run、Pi、E2B、Redis Streams/SSE 链路。CI 覆盖静态检查、构建、单元测试、真实 PG/Redis 集成和桌面/移动视口冒烟；真实沙箱与模型测试通过显式命令在配置齐全的本机执行。接口、持久卷要求和恢复限制见 [云端 Agent 后端](cloud-agent.md)，取舍记录见 [ADR-0004](adr/0004-project-layout-and-configuration.md)。

@@ -45,9 +45,10 @@ pnpm cli agents --json
 - 已实现：Google/GitHub/邮箱密码认证后端、验证与重置邮件、持久登录会话、当前用户接口和 Redis 原子限流；登录前端尚未接入。
 - 已实现：Workspace 后端、Owner/Admin/Member/Viewer、成员管理、邮箱邀请生命周期与跨空间授权，使用 Better Auth organization 的官方接口。并发与故障边界见[实现说明](docs/workspaces-and-authorization.md)。
 - 已实现：PG Inbox 输入校验和并发去重；真实 BullMQ 诊断 Worker、PG 检查和带过期时间的 Redis Stream。
-- 尚未实现：登录及 Workspace 前端、Router/Agent 执行、完整 Session/Run、设备连接、定时器/审批/Outbox、对象存储、Pi 适配和云端沙箱。对应目录中的 README 说明职责；没有模拟这些能力已经可用。
+- 已实现：云端 Agent/Session/Run、模型和推理强度选择、完整 Pi SDK、独立 E2B 沙箱、业务工具、原生会话接续、取消、PG 执行租约、Redis Streams/SSE 补流。M5 本机通过官方开源 E2B Embed + KVM 运行真实 Firecracker 沙箱；一期真实模型调用仅 DeepSeek。
+- 尚未实现：登录及 Workspace 前端、Router、长期 Task、设备连接、Timers、跨会话 Memory 整理、审批、Outbox 和对象存储。执行边界与验证范围见[云端 Agent 后端](docs/cloud-agent.md)。
 
-Inbox 当前仅提供内部存储入口，调用者提供可信 scope，尚无未认证写入接口；可靠执行还需同事务待派发动作、执行所有权和恢复规则。诊断队列不承担产品任务。
+Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；后台扫描 PG 再唤醒 BullMQ。通用 Inbox 内部入口仍只接受可信调用者提供的 scope。诊断队列不承担产品任务。
 
 ## 文档
 
@@ -57,6 +58,8 @@ Inbox 当前仅提供内部存储入口，调用者提供可信 scope，尚无�
 - [后端认证接入](docs/authentication.md)
 - [工作空间与授权方案](docs/workspaces-and-authorization.md)
 - [LobeHub 团队权限与 TS 授权调研](docs/research/teams-and-authorization.md)
+- [云端 Agent 后端与 API](docs/cloud-agent.md)
+- [本机 E2B Embed 部署](deploy/e2b/README.md)
 - [沙箱研究](docs/research/sandbox-design.md)
 
 `AGENTS.md` 保持简短，原始 TypeScript 指南保持完整。

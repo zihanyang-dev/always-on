@@ -1,5 +1,7 @@
-# 会话与 Inbox
+# 会话与输入
 
-当前已实现 appendInboxEvent：校验输入，由可信调用者传入 scope，以数据库唯一约束并发去重。尚未暴露未认证的写入端点。
+拥有 Session、用户消息接收、持久展示快照、取消请求和 Redis Streams/SSE 订阅。store.ts 集中 Session 的访问、锁与配置规则，events.ts 管短期传输，stream.ts 管单个订阅生命周期。SDK 原始上下文不由消息表重建。
 
-后续拥有会话、消息与输入记录；任务归属和 Router 决策归 tasks。接受输入与可靠派发需在实际执行链路中加入同事务待执行动作，不能把当前写入函数当作完整工作流。
+提交消息在一个事务创建 Inbox、queued Run 和用户消息。重复来源身份返回原 Run，不同文本冲突。通用 appendInboxEvent 仍供可信调用者接受尚未归属的来源输入，不替代 Session admission。
+
+Session 当前仅创建者可访问，并要求最新 Workspace 权限。浏览器断开只释放订阅，取消需显式写入。快照/补流和合并规则见 docs/cloud-agent.md；Router、设备和渠道接入未实现。

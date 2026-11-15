@@ -7,6 +7,14 @@
     "dist"
   ],
   "exports": {
+    "./models": {
+      "types": "./dist/models.d.ts",
+      "import": "./dist/models.js"
+    },
+    "./agents": {
+      "types": "./dist/agents.d.ts",
+      "import": "./dist/agents.js"
+    },
     "./users": {
       "types": "./dist/users.d.ts",
       "import": "./dist/users.js"

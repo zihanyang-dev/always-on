@@ -4,6 +4,8 @@ packages:
 
 catalog:
   "@biomejs/biome": 2.6.7
+  "@earendil-works/pi-ai": 1.5.2
+  "@earendil-works/pi-coding-agent": 1.5.2
   "@playwright/test": 1.65.1
   "@types/node": 26.6.6
   typescript: 7.0.2
@@ -11,6 +13,7 @@ catalog:
   zod: 4.6.7
   bullmq: 6.7.6
   drizzle-orm: 0.45.4
+  e2b: 2.64.0
   better-auth: 1.7.24
 
 minimumReleaseAgeExclude:
@@ -27,8 +30,10 @@ minimumReleaseAgeExclude:
   - better-auth@1.7.24
 
 allowBuilds:
+  "@google/genai": false
   esbuild: true
   msgpackr-extract: false
+  protobufjs: false
 
 strictPeerDependencies: true
 

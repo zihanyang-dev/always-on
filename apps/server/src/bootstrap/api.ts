@@ -1,4 +1,5 @@
 import { pino } from 'pino';
+import { hasWorkspaceAgents } from '../agents/index.js';
 import {
   createAuthentication,
   createAuthRateLimit,
@@ -9,6 +10,7 @@ import { createResendSender } from '../infrastructure/email/index.js';
 import { openRedis } from '../infrastructure/redis/index.js';
 import { createWorkspacePlugin } from '../workspaces/index.js';
 import { createApp } from './app.js';
+import { loadAgentModelCatalog } from './cloud-agent.js';
 import { parseApiEnv } from './env.js';
 import { openHttpServer } from './http.js';
 import { reportError } from './report-error.js';
@@ -50,13 +52,28 @@ async function main() {
     sendEmail,
     rateLimit: createAuthRateLimit({ redis: redis.client, prefix: env.REDIS_PREFIX }),
     onError,
-    plugins: [createWorkspacePlugin({ baseUrl: env.BETTER_AUTH_URL, sendEmail })],
+    plugins: [
+      createWorkspacePlugin({
+        baseUrl: env.BETTER_AUTH_URL,
+        sendEmail,
+        canDeleteWorkspace: async (workspaceId) =>
+          !(await hasWorkspaceAgents({ db: database.db, workspaceId })),
+      }),
+    ],
   });
+  const execution = env.cloudAgent
+    ? {
+        db: database.db,
+        catalog: await loadAgentModelCatalog(env.cloudAgent),
+        events: { redisUrl: env.REDIS_URL, prefix: env.REDIS_PREFIX },
+      }
+    : undefined;
   const app = createApp({
     name: env.APP_NAME,
     checks: { database: database.check, redis: () => redis.client.ping() },
     authentication,
     onError,
+    ...(execution ? { execution } : {}),
   });
   // Reverse-order disposal stops incoming requests before closing their backing connections.
   await using http = await openHttpServer({

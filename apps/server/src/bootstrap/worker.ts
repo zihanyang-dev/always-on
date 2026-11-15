@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { pino } from 'pino';
 import { openDatabase } from '../infrastructure/database/index.js';
 import { openSystemWorker } from '../system/index.js';
+import { openAgentWorker } from '../tasks/index.js';
+import { executeCloudRun } from './cloud-agent.js';
 import { parseWorkerEnv } from './env.js';
 import { reportError } from './report-error.js';
 import { observeShutdown } from './shutdown.js';
@@ -29,7 +32,30 @@ async function main() {
     onError,
   });
   await worker.ready();
+  const cloudConfig = env.cloudAgent;
+  await using agentWorker = cloudConfig
+    ? await openAgentWorker({
+        db: database.db,
+        redisUrl: env.REDIS_URL,
+        prefix: env.REDIS_PREFIX,
+        concurrency: env.WORKER_CONCURRENCY,
+        createId: randomUUID,
+        onError,
+        execute: (claim, context) =>
+          executeCloudRun({
+            db: database.db,
+            config: cloudConfig,
+            claim,
+            context,
+            createId: randomUUID,
+            onError,
+          }),
+      })
+    : undefined;
   logger.info('Worker listening');
-  await shutdown.wait;
+  const failure = agentWorker
+    ? await Promise.race([shutdown.wait, agentWorker.failure])
+    : await shutdown.wait;
+  if (failure) throw failure;
   logger.info('Worker stopping');
 }

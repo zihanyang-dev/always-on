@@ -1,5 +1,7 @@
-# Agent 配置、记忆与授权
+# Agent 定义
 
-拥有 Agent 的可编辑配置、版本、记忆和工具授权规则。后续对外通过单一入口提供能力，事务与行为测试相邻维护。
+拥有 Workspace 内 Agent 的指令、模型/推理强度、可见性和创建权限。公开入口 index.ts 提供 HTTP 组装及事务内授权读取；数据库查询随功能维护，连接和表定义由 infrastructure 提供。
 
-当前尚未实现模型配置、记忆整理或权限系统，不提供假数据接口。Pi SDK 解释归 packages/agent-runtime。
+模型目录由 bootstrap 调用 Pi 获得，公共契约无厂商枚举；凭据不存入 Agent。当前支持创建、按 Workspace 查询和内部使用授权。Session 创建时复制默认配置；Run 再保存当次快照。
+
+存在 Agent 时阻止 Workspace 删除，避免沙箱与会话文件失去归属。尚无 Agent 更新/删除、记忆整理或细粒度工具审批。执行与限制见 docs/cloud-agent.md。

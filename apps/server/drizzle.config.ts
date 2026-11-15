@@ -9,6 +9,7 @@ export default defineConfig({
     './src/infrastructure/database/schema.ts',
     './src/infrastructure/database/authentication-schema.ts',
     './src/infrastructure/database/workspace-schema.ts',
+    './src/infrastructure/database/agent-schema.ts',
   ],
   out: './migrations',
   dbCredentials: { url: env.DATABASE_URL },

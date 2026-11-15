@@ -2,11 +2,13 @@
 
 日期：2026-11-14。
 
-状态：静态源码评估，尚未执行模型调用、安装 SDK 或完成故障恢复原型。
+状态：正文保留最初的静态源码评估范围；2026-11-15 已接入 Pi 1.5.2，并验证 DeepSeek + 独立 E2B 云端链路，见 [实现说明](../cloud-agent.md)。本地 Connector 仍未实现。
+
+2026-11-15 补充：[云端 Agent、恢复与流式传输复核](cloud-agent-runtime.md) 已重新追踪 LobeHub 的 Agent 定义、PG/Redis 状态、工具结果复用和 Gateway 重连，并将下一阶段收敛为平台自有云端 Pi Agent；本地设备接入另行实施。该文仍是待验证提案，不代表执行已经接入。
 
 ## 结论与建议
 
-推荐优先验证 Pi Agent Core + pi-ai，复用通用模型调用和工具循环；平台维护长期调度、持久事实、工具恢复和权限规则。Pi Coding Agent 通过 SDK/RPC 作为完整执行器接入。本地执行器支持多种 Agent，不能把接口和产品入口限定为 Codex。
+2026-11-15 根据“多模型、尽量减少自有 harness 维护、专注效果”的目标，调整为优先验证完整 Pi Coding Agent SDK 的云端集成，复用其会话、压缩、工具和扩展生命周期。Agent Core + pi-ai 保留为出现明确能力缺口后的备选，不再默认由平台重建这些能力。原始源码评估保留在下文，最新职责和恢复验收见[云端方案](cloud-agent-runtime.md)。本地执行器接入仍应支持多种 Agent，不能把接口和产品入口限定为 Codex。
 
 Pi 执行层选型仍是提案。PostgreSQL 持久化、Redis + BullMQ 调度、Redis Streams 运行事件已获用户确认。
 
@@ -26,7 +28,7 @@ Pi 旧仓库 `badlogic/pi-mono` 当前重定向到 `earendil-works/pi`。本次�
 | 方案 | 已提供的能力 | 平台仍需承担的工作与适用判断 |
 | --- | --- | --- |
 | 使用 AI SDK 等模型库自己组织循环 | 模型调用、流输出和工具调用原语；具体取决于所选库 | 自己维护循环、工具编排、上下文、流事件及恢复；控制最直接，开发和维护范围最大 |
-| Pi Agent Core + pi-ai | 通用模型/工具循环、流事件、工具参数解析、前后钩子、steering/follow-up、取消和回合边界 | 自己维护 PostgreSQL 持久化、恢复、审批、上下文整理及资源隔离；当前推荐验证 |
+| Pi Agent Core + pi-ai | 通用模型/工具循环、流事件、工具参数解析、前后钩子、steering/follow-up、取消和回合边界 | 平台承担更多恢复、审批、上下文整理及资源隔离；原评估方向，当前改为备选 |
 | Pi Coding Agent SDK | AgentSession、SessionManager、压缩、技能/扩展、资源发现、配置及编程工具 | 默认约定围绕工作目录和本地配置/会话；适合作为完整的 Pi 执行器；将其整个会话模型接入 PostgreSQL 需要明确的格式转换和所有权 |
 | Pi Coding Agent RPC | 通过子进程 JSONL 使用完整 Pi；可启动、追加输入、查询和取消 | Connector 维护子进程、会话引用、协议版本、输出回传和关停；适合本地 Pi 接入 |
 | pi-durable | 已有持久 conversation/task/document、模型与工具检查点、恢复、等待/睡眠、重放策略和审批 hook 示例 | 明确标为实验性；当前内置存储与单写者约束需要额外适配 PostgreSQL 和多 Worker 的所有权；暂不作为平台默认持久运行时 |

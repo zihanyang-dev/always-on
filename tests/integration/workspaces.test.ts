@@ -276,12 +276,14 @@ describe('workspace invitations', () => {
       fixture.createActor('stranger'),
     ]);
     const workspace = await fixture.createWorkspace({ actor: owner, label: 'invitations' });
+    const requestedAtMs = Date.now();
     const invitation = await fixture.invite({
       actor: owner,
       organizationId: workspace.id,
       email: recipient.email,
       role: 'viewer',
     });
+    const acknowledgedAtMs = Date.now();
     const message = await fixture.readEmail({
       to: recipient.email,
       subject: `Join ${workspace.name}`,
@@ -295,7 +297,10 @@ describe('workspace invitations', () => {
       where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
     });
     assert.ok(stored);
-    expect(stored.expiresAt.getTime() - stored.createdAt.getTime()).toBe(7 * 24 * 60 * 60 * 1_000);
+    // The SDK reads the clock separately for expiry and creation; assert the policy at its request boundary.
+    const validityMs = 7 * 24 * 60 * 60 * 1_000;
+    expect(stored.expiresAt.getTime()).toBeGreaterThanOrEqual(requestedAtMs + validityMs);
+    expect(stored.expiresAt.getTime()).toBeLessThanOrEqual(acknowledgedAtMs + validityMs);
     const details = await fixture.request({ path: link, actor: recipient, method: 'GET' });
     expect(details.status).toBe(200);
     expect(

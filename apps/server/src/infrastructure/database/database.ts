@@ -1,5 +1,6 @@
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
+import { AGENT_TABLES } from './agent-schema.js';
 import { AUTHENTICATION_TABLES } from './authentication-schema.js';
 import { INBOX_EVENTS } from './schema.js';
 import { WORKSPACE_TABLES } from './workspace-schema.js';
@@ -8,11 +9,14 @@ import { WORKSPACE_TABLES } from './workspace-schema.js';
 export const DATABASE_SCHEMA = {
   ...AUTHENTICATION_TABLES,
   ...WORKSPACE_TABLES,
+  ...AGENT_TABLES,
   inboxEvents: INBOX_EVENTS,
 };
 
 /** Database handle shared with feature-owned queries and transactions. */
 export type Database = NodePgDatabase<typeof DATABASE_SCHEMA>;
+/** A feature-owned transaction with the same schema as the shared connection. */
+export type DatabaseTransaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 /** Pool lifetime owned by the process or integration test that creates it. */
 export interface DatabaseResource extends AsyncDisposable {
   readonly db: Database;

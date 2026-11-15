@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { IncomingMessage } from 'node:http';
 import { Socket } from 'node:net';
+import type { ModelCatalog } from '@always-on/contracts/models';
 import { convertSetCookieToCookie } from 'better-auth/test';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { expect, vi } from 'vitest';
 import { z } from 'zod';
+import { hasWorkspaceAgents } from '../../apps/server/src/agents/index.js';
 import { createApp } from '../../apps/server/src/bootstrap/app.js';
 import { parseWorkerEnv } from '../../apps/server/src/bootstrap/env.js';
 import {
@@ -13,13 +15,21 @@ import {
   createAuthRateLimit,
 } from '../../apps/server/src/infrastructure/authentication/index.js';
 import {
+  AGENT_SESSIONS,
+  AGENTS,
   AUTHENTICATION_TABLES,
   type Database,
+  INBOX_EVENTS,
   openDatabase,
   WORKSPACE_TABLES,
 } from '../../apps/server/src/infrastructure/database/index.js';
 import type { EmailMessage } from '../../apps/server/src/infrastructure/email/index.js';
 import { openRedis } from '../../apps/server/src/infrastructure/redis/index.js';
+import {
+  type AgentWorkerResource,
+  openAgentWorker,
+  type RunExecutor,
+} from '../../apps/server/src/tasks/index.js';
 import { createWorkspacePlugin } from '../../apps/server/src/workspaces/index.js';
 
 const ENV = parseWorkerEnv(process.env);
@@ -35,16 +45,21 @@ const INVITATION_RESPONSE_SCHEMA = z.object({
 const MEMBER_RESPONSE_SCHEMA = z.object({ id: z.string(), userId: z.string(), role: z.string() });
 
 type WorkspaceActor = { id: string; email: string; headers: Headers; clientIp: string };
-type WorkspaceRequest = {
+/** One HTTP request through the application fixture, with optional real login credentials. */
+export type WorkspaceRequest = {
   path: string;
   actor?: WorkspaceActor;
   body?: unknown;
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PATCH';
+  headers?: Readonly<Record<string, string>>;
+  signal?: AbortSignal;
   origin?: string;
   clientIp?: string;
 };
-interface WorkspaceFixture extends AsyncDisposable {
+/** Application dependencies and identities owned by a workspace integration scenario. */
+export interface WorkspaceFixture extends AsyncDisposable {
   readonly db: Database;
+  readonly startWorker: (execute: RunExecutor) => Promise<AgentWorkerResource>;
   readonly request: (input: WorkspaceRequest) => Promise<Response>;
   readonly createActor: (label: string) => Promise<WorkspaceActor>;
   readonly createWorkspace: (input: {
@@ -69,7 +84,11 @@ interface WorkspaceFixture extends AsyncDisposable {
 }
 
 /** Owns real application resources and deletes only records created by this fixture. */
-export async function openWorkspaceFixture(): Promise<WorkspaceFixture> {
+export async function openWorkspaceFixture({
+  catalog,
+}: {
+  catalog?: ModelCatalog;
+} = {}): Promise<WorkspaceFixture> {
   const prefix = `workspace-test-${randomUUID()}`;
   const emails: string[] = [];
   const slugs: string[] = [];
@@ -99,7 +118,14 @@ export async function openWorkspaceFixture(): Promise<WorkspaceFixture> {
         github: undefined,
       },
       sendEmail,
-      plugins: [createWorkspacePlugin({ baseUrl: BASE_URL, sendEmail })],
+      plugins: [
+        createWorkspacePlugin({
+          baseUrl: BASE_URL,
+          sendEmail,
+          canDeleteWorkspace: async (workspaceId) =>
+            !(await hasWorkspaceAgents({ db: database.db, workspaceId })),
+        }),
+      ],
       rateLimit: createAuthRateLimit({ redis: redis.client, prefix }),
       onError,
     }),
@@ -109,10 +135,20 @@ export async function openWorkspaceFixture(): Promise<WorkspaceFixture> {
     checks: { database: database.check, redis: () => redis.client.ping() },
     authentication,
     onError,
+    ...(catalog
+      ? {
+          execution: {
+            db: database.db,
+            catalog,
+            events: { redisUrl: ENV.REDIS_URL, prefix },
+          },
+        }
+      : {}),
   });
   const resources = startup.move();
   return {
     db: database.db,
+    startWorker,
     request,
     createActor,
     createWorkspace,
@@ -141,8 +177,11 @@ export async function openWorkspaceFixture(): Promise<WorkspaceFixture> {
     method = 'POST',
     origin = BASE_URL,
     clientIp = actor?.clientIp ?? '192.0.2.1',
+    headers: extraHeaders,
+    signal,
   }: WorkspaceRequest) {
     const headers = new Headers(actor?.headers);
+    for (const [name, value] of Object.entries(extraHeaders ?? {})) headers.set(name, value);
     headers.set('origin', origin);
     if (body !== undefined) headers.set('content-type', 'application/json');
     // Model distinct socket peers; untrusted forwarding headers cannot supply this identity.
@@ -153,6 +192,7 @@ export async function openWorkspaceFixture(): Promise<WorkspaceFixture> {
       {
         method,
         headers,
+        ...(signal ? { signal } : {}),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       },
       { incoming: new IncomingMessage(socket) },
@@ -238,14 +278,51 @@ export async function openWorkspaceFixture(): Promise<WorkspaceFixture> {
   }
 
   async function deleteDatabaseRecords() {
-    if (slugs.length > 0)
+    if (slugs.length > 0) {
+      const sessions = await database.db
+        .select({ id: AGENT_SESSIONS.id })
+        .from(AGENT_SESSIONS)
+        .innerJoin(
+          WORKSPACE_TABLES.organization,
+          eq(AGENT_SESSIONS.workspaceId, WORKSPACE_TABLES.organization.id),
+        )
+        .where(inArray(WORKSPACE_TABLES.organization.slug, slugs));
+      const workspaces = database.db
+        .select({ id: WORKSPACE_TABLES.organization.id })
+        .from(WORKSPACE_TABLES.organization)
+        .where(inArray(WORKSPACE_TABLES.organization.slug, slugs));
+      // Test teardown explicitly releases product records; public deletion must preserve their ownership.
+      await database.db
+        .delete(AGENT_SESSIONS)
+        .where(inArray(AGENT_SESSIONS.workspaceId, workspaces));
+      await database.db.delete(AGENTS).where(inArray(AGENTS.workspaceId, workspaces));
       await database.db
         .delete(WORKSPACE_TABLES.organization)
         .where(inArray(WORKSPACE_TABLES.organization.slug, slugs));
+      if (sessions.length > 0)
+        await database.db.delete(INBOX_EVENTS).where(
+          inArray(
+            INBOX_EVENTS.scopeId,
+            sessions.map((session) => session.id),
+          ),
+        );
+    }
     if (emails.length > 0)
       await database.db
         .delete(AUTHENTICATION_TABLES.user)
         .where(inArray(AUTHENTICATION_TABLES.user.email, emails));
+  }
+
+  function startWorker(execute: RunExecutor) {
+    return openAgentWorker({
+      db: database.db,
+      redisUrl: ENV.REDIS_URL,
+      prefix,
+      concurrency: 2,
+      execute,
+      createId: randomUUID,
+      onError,
+    });
   }
 
   async function deleteRateLimits() {

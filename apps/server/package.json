@@ -15,16 +15,21 @@
     "db:migrate": "node --env-file=../../.env.local dist/bootstrap/migrate.js"
   },
   "dependencies": {
+    "@always-on/agent-runtime": "workspace:*",
     "@always-on/contracts": "workspace:*",
     "@better-auth/drizzle-adapter": "1.7.24",
+    "@earendil-works/pi-coding-agent": "catalog:",
     "@hono/node-server": "2.1.8",
+    "@hono/zod-validator": "0.9.1",
     "better-auth": "catalog:",
     "bullmq": "catalog:",
     "drizzle-orm": "catalog:",
+    "e2b": "catalog:",
     "hono": "4.13.18",
     "ioredis": "6.0.0",
     "pg": "8.23.1",
     "pino": "10.4.0",
+    "typebox": "1.4.7",
     "zod": "catalog:"
   },
   "devDependencies": {

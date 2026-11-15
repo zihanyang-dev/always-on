@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { EMAIL_FROM_SCHEMA } from '../infrastructure/email/index.js';
+import { type CloudAgentConfiguration, parseCloudAgentConfiguration } from './agent-config.js';
 
 const DATABASE_ENV_SCHEMA = z.object({ DATABASE_URL: z.url({ protocol: /^postgres(?:ql)?$/ }) });
 const COMMON_ENV_SCHEMA = DATABASE_ENV_SCHEMA.extend({
@@ -29,9 +30,13 @@ const WORKER_ENV_SCHEMA = COMMON_ENV_SCHEMA.extend({
 });
 
 /** Deployment variables required by the HTTP process. */
-export type ApiEnv = z.infer<typeof API_ENV_SCHEMA>;
+export interface ApiEnv extends z.infer<typeof API_ENV_SCHEMA> {
+  readonly cloudAgent: CloudAgentConfiguration | null;
+}
 /** Deployment variables required by the background process. */
-export type WorkerEnv = z.infer<typeof WORKER_ENV_SCHEMA>;
+export interface WorkerEnv extends z.infer<typeof WORKER_ENV_SCHEMA> {
+  readonly cloudAgent: CloudAgentConfiguration | null;
+}
 /** Deployment variables required by a database migration. */
 export type DatabaseEnv = z.infer<typeof DATABASE_ENV_SCHEMA>;
 
@@ -70,14 +75,14 @@ function validateAuthenticationEnv(
 /** Parses API configuration once at process startup, without reporting secret values. */
 export function parseApiEnv(input: unknown): ApiEnv {
   const result = API_ENV_SCHEMA.safeParse(input);
-  if (result.success) return result.data;
+  if (result.success) return { ...result.data, cloudAgent: parseCloudAgentConfiguration(input) };
   throwConfigurationError({ role: 'API', issues: result.error.issues });
 }
 
 /** Parses Worker configuration independently of HTTP-only settings. */
 export function parseWorkerEnv(input: unknown): WorkerEnv {
   const result = WORKER_ENV_SCHEMA.safeParse(input);
-  if (result.success) return result.data;
+  if (result.success) return { ...result.data, cloudAgent: parseCloudAgentConfiguration(input) };
   throwConfigurationError({ role: 'Worker', issues: result.error.issues });
 }
 

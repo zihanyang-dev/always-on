@@ -1,10 +1,10 @@
 # ADR-0002：Agent 执行层与本地 Connector
 
-日期：2026-11-14。
+日期：2026-11-14；2026-11-15 更新云端 SDK 选择、Sandbox 边界与实施顺序。
 
-状态：Proposed。基础设施选型已确认；Pi 具体包的选择、执行协议和首批适配器仍为设计建议，尚未实现或运行验证。
+状态：云端决策 Accepted，首版 Pi 1.5.2 + E2B 已实现并验证；本地 Connector 部分仍为 Proposed。实际交付与恢复边界见 [云端 Agent](../cloud-agent.md)。
 
-最新收敛版见 [架构总览](../architecture.md)。共用 CLI 的 connect/run 分别服务原生本地与云端沙箱；下面较细的职责拆分不要求逐项建目录或服务，沙箱具体后端依据 [源码与行业对照](../research/sandbox-design.md) 验证。
+最新收敛版见 [架构总览](../architecture.md)。当前先验证云端完整 Pi SDK，Runner 与用户代码 Sandbox 分离；本地 CLI 接入后续推进。下面较细的职责拆分不要求逐项建目录或服务，沙箱具体后端依据 [源码与行业对照](../research/sandbox-design.md) 验证。
 
 ## 需求
 
@@ -17,7 +17,7 @@
 ## 建议决策
 
 1. 平台负责来源、持久事件、Session/Run、Timer、记忆、授权和结果投递。
-2. 云端通用执行器优先验证 Pi Agent Core + pi-ai，复用模型和工具循环。应用仍实现持久恢复、审批及上下文策略。
+2. 云端通用执行器优先验证完整 Pi Coding Agent SDK，复用循环、原生会话与压缩。Runner 位于平台可信计算环境，用户代码通过公开工具后端在独立 Sandbox 执行，Pi 会话在沙箱外持久保存。
 3. 独立 Connector CLI 在用户设备主动连接平台，管理设备上的多种 Agent。
 4. 执行引擎与执行位置分开记录。执行器协议转换集中在各适配器，平台使用稳定、带版本的命令和事件契约。
 5. Router 与 Worker 是执行角色，使用同一执行器接入约定；Router 的任务归属判断与执行器/位置选择分别维护，详见 [ADR-0003](0003-request-routing-and-dispatch.md)。
@@ -33,7 +33,9 @@ flowchart TD
     Commit --> Dispatch[Session / Run / 待投递记录 → Redis / BullMQ]
     Bound --> Dispatch
     Dispatch --> Route[执行位置选择]
-    Route --> Cloud[云端 Worker: Pi Core 执行器]
+    Route --> Cloud[可信 Runner: 完整 Pi SDK]
+    Cloud --> Sandbox[独立 Sandbox: 文件与命令]
+    Cloud --> History[Pi 原生会话: 独立持久存储]
     Route --> Gateway[设备连接: 认证 WebSocket / HTTPS]
     Gateway --> Connector[本地 Connector]
     Connector --> Engines[Pi / Codex / Claude Code / 其他适配器]
@@ -47,7 +49,7 @@ flowchart TD
 
 ## 执行引擎和执行位置
 
-引擎说明谁组织模型、工具和会话，例如平台的 Pi Core 执行器、Pi Coding Agent、Codex 或 Claude Code。位置说明在哪台设备或受管理环境执行。
+引擎说明谁组织模型、工具和会话，例如平台的 Pi SDK、Codex 或 Claude Code。位置说明在哪台设备或受管理环境执行；云端 harness 的部署位置与工具 Sandbox 分别记录，不能默认两者同处一个环境。
 
 这两个维度分别记录。Agent 配置包含可用引擎和位置约束；每个 Run 固定当次选择及配置版本。将来切换引擎不修改既有 Run 的历史身份。
 
@@ -60,8 +62,8 @@ flowchart TD
 | 方案 | 收益 | 代价与当前判断 |
 | --- | --- | --- |
 | 自己基于模型 SDK 实现循环 | 完全控制调用顺序、消息与工具行为 | 自行维护较多已存在的循环逻辑；作为出现明确能力缺口时的替代方案 |
-| Pi Agent Core + pi-ai | 复用通用循环和供应商接入；应用保持持久化和工具控制 | 需要自己实现恢复、压缩、审批与长期记忆；当前优先验证 |
-| Pi Coding Agent SDK/RPC | 已有技能、扩展、压缩、工具和会话体验 | 带有本地配置/工作目录/会话模型；作为完整 Pi 执行器接入，是否用作云端默认方案需另验证 |
+| Pi Agent Core + pi-ai | 复用通用循环和供应商接入；应用保持持久化和工具控制 | 会增加自有恢复、压缩等实现，作为完整 SDK 无法满足实际需求时的备选 |
+| Pi Coding Agent SDK/RPC | 已有技能、扩展、压缩、工具和会话体验 | 当前优先验证进程内 SDK；需显式配置会话与资源，工具委派独立 Sandbox。RPC 留给实际需要隔离子进程或本地接入的场景 |
 | pi-durable | 已有持久检查点、等待与工具恢复 | 实验性，现有单写者和内置存储约束需要适配 PostgreSQL/多 Worker；继续观察 |
 
 若选择 Agent Core，平台内该执行器使用 pi-ai，不默认另叠一套模型 SDK。Pi 自身事件和类型由适配器解释，不扩散到 Web、渠道、存储和其他执行器。
@@ -74,8 +76,8 @@ flowchart TD
 
 - 使用上游发布包及公开 exports，优先使用文档明确的扩展点。保持上游实现完整，不复制循环、不 monkey patch、不继承私有实现或深入导入源码。
 - 若关键恢复或审批行为无法通过所用公开能力实现，重新评估官方 SDK/RPC 或调整平台执行政策，不以修改 Pi 内部实现来完成集成。
-- 依赖集中在 `agent-executors/pi-core` 与 `pi-rpc` 等对应 Adapter 的 Implementation。应用调用者只了解执行输入、资源生命周期、事件、交互和最终结果；不获取 Pi Agent 实例，也不按 Pi 的字段组织调用顺序。
-- Interface 按平台需要和至少两种真实执行器的行为设计，不逐一包装 Pi 的所有方法，也不把能力压缩到只能输出文本。新能力先进入对应 Adapter，出现产品需求时再扩展公共契约。
+- 依赖集中在 `packages/agent-runtime` 对应 Adapter 的 Implementation。应用调用者只了解执行输入、资源生命周期、事件、交互和最终结果；不获取 Pi Agent 实例，也不按 Pi 的字段组织调用顺序。
+- Interface 按当前已验证的执行需要设计，不逐一包装 Pi 的所有方法，也不把能力压缩到只能输出文本。首版只接云端 SDK，不为假想的第二种执行器建立通用框架；实际共同行为出现后再集中维护。
 - 组合根可选择 Pi Adapter 并提供连接、凭据与工具能力；Pi SDK 的构造、协议解释、钩子映射和失败语义归 Adapter。
 - 部署锁定一组经过验证的 Pi 依赖版本；依照上游依赖关系一起更新 core、pi-ai 和必要的 schema 包。通过明确的升级变更更新锁文件，不在运行中解析浮动 latest。
 
@@ -147,35 +149,29 @@ PostgreSQL 事务保存 Inbox/Run 和待投递记录；投递器发送 BullMQ �
 
 ```text
 apps/
-  connector/
-    src/
-      bootstrap/
-      pairing/
-      connection/
-      executions/               # 本地执行登记、派发、关停与回传
   server/src/
-    application/
-      devices/                  # 归属、能力、在线与路由规则
-      runs/                     # 持久状态、所有权与执行用例
-    harness/                    # 本次执行的上下文、资源和平台边界
+    agents/                     # 配置、记忆和工具授权
+    sessions/                   # 输入、会话、消息与流订阅
+    tasks/                      # Router、Run、调度与执行所有权
+    sandbox/                    # 工具环境、provider 与生命周期
+    devices/                    # 后续本地设备归属、能力与派发
+  cli/src/
+    connect/                    # 后续本地连接、配对与派发
+    run/                        # 真实 CLI 执行、回传与关停
 packages/
   contracts/                    # HTTP、设备命令与事件 schema
-  agent-executors/
+  agent-runtime/
     src/
-      pi-core/
-      pi-rpc/
-      codex/
-      claude-code/
-      acp/                      # 出现实际共同行为后集中协议职责
+      pi/                       # 当前云端 SDK 的具体集成
 ```
 
-目录按实际能力实施时创建。Connector 和云端确实复用的 SDK/进程适配器放入共享包；服务端数据库、租户配置和业务工具清单留在其所有者。无状态转换使用函数，有关联状态和生命周期的执行资源可以用 class 或闭包表达，遵守 [TypeScript 代码规范](../typescript-style-guide.md)。
+目录按实际能力实施时创建，不为候选执行器预建目录。Connector 和云端确实复用的 SDK/进程适配器放入共享包；服务端数据库、租户配置和业务工具清单留在其所有者。无状态转换使用函数，有关联状态和生命周期的执行资源可以用 class 或闭包表达，遵守 [TypeScript 代码规范](../typescript-style-guide.md)。
 
 ## 建议实施顺序与验收
 
-先做两条小而完整的链路：平台 Pi Core 的一次通用工具任务，以及 Connector 派发一个本地 Agent 并完整回传结果。以两种实际执行行为检验公共边界，再增加执行器。
+先做云端完整 Pi SDK 的通用工具链路，一期只验证 DeepSeek 真实调用、独立 Sandbox、原生会话持久化、流、取消及故障恢复；多供应商接口沿用 Pi，不接入或调用 Claude。本地阶段再验证 Connector 派发一个真实 Agent 并完整回传结果，以实际行为检验需要共享的契约。
 
-首批建议 Pi RPC、Codex App Server、Claude Code，并选择一个 ACP 执行器验证协议共性；清单是实施建议，不代表已实现支持。平台已有 Agent 仍可使用同一套 Inbox、Timer、审批与展示，具体工具和引擎按场景配置。
+后续本地接入候选为 Pi RPC、Codex App Server、Claude Code，以及一个用于验证协议共性的 ACP 执行器；清单是后续实施建议，不代表已实现支持。平台已有 Agent 仍可使用同一套 Inbox、Timer、审批与展示，具体工具和引擎按场景配置。
 
 验证内容：
 
@@ -189,3 +185,10 @@ packages/
 8. 普通文本及工具进度、最终产物、未知用量在 Web 中如实展示。
 
 本 ADR 未给出性能结论，也未声称 Pi 或全部外部 Agent 已满足上述恢复与审批要求。执行层最终选择以这些链路验证和用户评审为准。
+
+
+## 首版实现边界（2026-11-15）
+
+平台持久化执行器检查点 JSON，具体格式只由执行器解释；Pi 原生文件留在可信持久卷。共享执行观测与工作环境能力不复制 Pi SDK，不要求未来本地执行器使用文件路径。组合根直接选用 Pi 和 E2B，不增加尚无第二实现的注册表。
+
+首版每条输入排入独立 Run，同 Session 串行；中断与未知副作用隔离，不自动重放。CLI 接入、交互审批、Router 和完整删除/回收流程不在本轮实现中。真实测试仅调用 DeepSeek，第二 provider 仅受控响应验证。

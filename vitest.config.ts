@@ -3,6 +3,11 @@ import { configDefaults, defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['apps/**/*.test.ts', 'packages/**/*.test.ts', 'tests/sdk/**/*.test.ts'],
-    exclude: [...configDefaults.exclude, 'tests/sdk/**/*.pg.test.ts'],
+    exclude: [
+      ...configDefaults.exclude,
+      'tests/sdk/**/*.pg.test.ts',
+      'tests/sdk/**/*.sandbox.test.ts',
+      'tests/sdk/**/*.cloud.test.ts',
+    ],
   },
 });

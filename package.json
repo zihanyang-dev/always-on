@@ -17,6 +17,8 @@
     "test": "pnpm build:packages && vitest run",
     "test:integration": "pnpm build:packages && node --env-file=.env.local node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts",
     "test:e2e": "node --env-file=.env.local node_modules/@playwright/test/cli.js test",
+    "test:sandbox": "pnpm build:packages && node --env-file=.env.local node_modules/vitest/vitest.mjs run --config vitest.sandbox.config.ts",
+    "test:cloud": "pnpm build:packages && node --env-file=.env.local node_modules/vitest/vitest.mjs run --config vitest.cloud.config.ts",
     "infra:up": "docker compose --env-file .env.local up -d --wait postgres redis",
     "infra:down": "docker compose --env-file .env.local down",
     "db:generate": "pnpm --filter @always-on/server db:generate",
@@ -31,6 +33,7 @@
     "better-auth": "catalog:",
     "bullmq": "catalog:",
     "drizzle-orm": "catalog:",
+    "e2b": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "zod": "catalog:"
