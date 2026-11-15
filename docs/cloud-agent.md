@@ -46,7 +46,7 @@ Owner/Admin/Member 可以创建和使用 Agent，Viewer 只读可见定义。Age
 
 ## 输入与状态
 
-`sourceEventId` 在 Session + 来源范围内唯一。同身份、同文本返回原 Run；同身份、不同文本返回冲突。Inbox、queued Run、用户展示消息在一个 PG 事务提交。BullMQ 只携带 Run ID，即使 Redis 重建，PG 待执行记录仍可再次唤醒；数据库领取与唯一约束防止重复执行。
+`sourceEventId` 在 Session + 来源范围内唯一。同身份、同文本返回原 Run；同身份、不同文本返回冲突。Inbox、queued Run、用户展示消息在一个 PG 事务提交。BullMQ 只携带 Run ID，即使 Redis 重建，PG 待执行记录仍可再次唤醒；数据库领取与唯一约束防止重复执行。队列不保留已失败的唤醒 ID，领取前失败的 queued 记录可以再次投递；已领取或结果不确定的执行由 PG 状态阻止重跑。
 
 Run 状态为 queued、running、cancelling、completed、cancelled、failed、recovery_required。取消排队项立即生效；执行项在租约轮询和工具授权处观察取消，SDK 和沙箱收尾完成后提交终态。浏览器关闭只断开订阅。与成功响应竞态的已提交取消请求优先，真实收尾失败或未知副作用仍保留失败事实。
 

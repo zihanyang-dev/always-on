@@ -59,7 +59,10 @@ export type WorkspaceRequest = {
 /** Application dependencies and identities owned by a workspace integration scenario. */
 export interface WorkspaceFixture extends AsyncDisposable {
   readonly db: Database;
-  readonly startWorker: (execute: RunExecutor) => Promise<AgentWorkerResource>;
+  readonly startWorker: (
+    execute: RunExecutor,
+    options?: { createId?: () => string },
+  ) => Promise<AgentWorkerResource>;
   readonly request: (input: WorkspaceRequest) => Promise<Response>;
   readonly createActor: (label: string) => Promise<WorkspaceActor>;
   readonly createWorkspace: (input: {
@@ -313,14 +316,17 @@ export async function openWorkspaceFixture({
         .where(inArray(AUTHENTICATION_TABLES.user.email, emails));
   }
 
-  function startWorker(execute: RunExecutor) {
+  function startWorker(
+    execute: RunExecutor,
+    { createId = randomUUID }: { createId?: () => string } = {},
+  ) {
     return openAgentWorker({
       db: database.db,
       redisUrl: ENV.REDIS_URL,
       prefix,
       concurrency: 2,
       execute,
-      createId: randomUUID,
+      createId,
       onError,
     });
   }

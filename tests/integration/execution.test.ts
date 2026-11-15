@@ -65,6 +65,29 @@ it('preserves Session and sandbox ownership when deleting a Workspace with Agent
   expect((await fixture.snapshot()).session.id).toBe(fixture.sessionId);
 });
 
+it('redispatches a durable queued Run after a failed wake-up before ownership was acquired', async () => {
+  await using fixture = await openExecutionFixture();
+  const submitted = await fixture.submit();
+  let claimAttempts = 0;
+  await using _worker = await fixture.startWorker(execute, { createId });
+  await vi.waitFor(async () => expect((await fixture.snapshot()).run?.status).toBe('completed'), {
+    timeout: 5_000,
+  });
+  expect(claimAttempts).toBe(2);
+  fixture.expectErrors([`Agent queue job ${submitted.run.id} failed`]);
+
+  async function execute() {
+    return { status: 'completed' as const, checkpoint: null };
+  }
+
+  function createId() {
+    claimAttempts += 1;
+    // An invalid token fails the claim transaction before any executor or external effect runs.
+    if (claimAttempts === 1) return 'invalid-owner-token';
+    return randomUUID();
+  }
+});
+
 it('replays retained events and explicitly resets an expired or future cursor', async () => {
   await using fixture = await openExecutionFixture();
   await using _worker = await fixture.startWorker(async (_claim, context) => {

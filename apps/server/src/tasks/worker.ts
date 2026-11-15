@@ -39,7 +39,9 @@ export async function openAgentWorker({
   const queue = new Queue(RUN_QUEUE_NAME, {
     connection: progress.client,
     prefix,
-    defaultJobOptions: { attempts: 1, removeOnComplete: true, removeOnFail: 100 },
+    // Failed wake-ups must not retain the Run ID and block durable queued rows from redispatch.
+    // Claimed or uncertain Runs are excluded by PostgreSQL, independently of queue retention.
+    defaultJobOptions: { attempts: 1, removeOnComplete: true, removeOnFail: true },
   });
   startup.defer(() => queue.close());
   queue.on('error', onError);

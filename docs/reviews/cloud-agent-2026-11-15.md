@@ -24,6 +24,7 @@
 | 有资源的 Workspace 级联删除使沙箱失去归属 | 官方组织删除 hook 返回 409，外键 restrict 兜住并发创建；沙箱带最小归属元数据 |
 | Worker 清理失败时可能跳过等待消费循环 | 收尾等待资源释放和消费循环，保留独立清理失败 |
 | 邀请测试精确比较 SDK 两次取时，偶发相差 1 毫秒 | 改为在请求前后时间范围内验证七天有效期，不改业务有效期 |
+| BullMQ 保留领取前失败的任务 ID，挡住 PG 待执行记录再次唤醒 | 失败唤醒不留队列身份；PG queued 才能重投，已领取/不确定 Run 不重跑；真实回归验证 |
 | 共用 PG 的集成测试并行启动 Worker 相互领取输入 | 测试文件串行运行；不在生产查询加入测试过滤条件 |
 
 ## 代码形状
@@ -40,7 +41,7 @@ sessions/store.ts 约 317 行，包含同一 Session 的访问、输入、配置
 | --- | --- |
 | pnpm check | Biome、严格类型和测试类型检查通过 |
 | pnpm test | 45 个单元/受控 SDK 测试通过 |
-| pnpm test:integration | 45 个真实 PG/Redis/认证/队列/SSE 测试通过 |
+| pnpm test:integration | 46 个真实 PG/Redis/认证/队列/SSE 测试通过 |
 | pnpm test:sandbox | 7 个真实 E2B Firecracker 测试通过 |
 | pnpm test:cloud | 2 个真实 DeepSeek + E2B 测试通过，含完整 HTTP 到 Worker 链路 |
 | pnpm build | 所有应用与共享包构建通过 |
