@@ -137,7 +137,7 @@ export async function openExecutionFixture(
     const response = await request({
       path: `/api/sessions/${session.id}/events`,
       method: 'GET',
-      signal: cancellation.signal,
+      signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(10_000)]),
       ...(cursor ? { headers: { 'last-event-id': cursor } } : {}),
     });
     expect(response.status).toBe(200);

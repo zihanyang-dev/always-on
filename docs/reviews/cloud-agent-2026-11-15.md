@@ -41,8 +41,8 @@ sessions/store.ts 约 317 行，包含同一 Session 的访问、输入、配置
 | --- | --- |
 | pnpm check | Biome、严格类型和测试类型检查通过 |
 | pnpm test | 45 个单元/受控 SDK 测试通过 |
-| pnpm test:integration | 46 个真实 PG/Redis/认证/队列/SSE 测试通过 |
-| pnpm test:sandbox | 7 个真实 E2B Firecracker 测试通过 |
+| pnpm test:integration | 53 个真实 PG/Redis/认证/队列/SSE 测试通过 |
+| pnpm test:sandbox | 9 个真实 E2B Firecracker 测试通过 |
 | pnpm test:cloud | 2 个真实 DeepSeek + E2B 测试通过，含完整 HTTP 到 Worker 链路 |
 | pnpm build | 所有应用与共享包构建通过 |
 | pnpm test:e2e | 桌面/移动端 12 个既有页面冒烟通过 |
@@ -51,6 +51,25 @@ sessions/store.ts 约 317 行，包含同一 Session 的访问、输入、配置
 真实链路包含平台业务工具、文件/命令、暂停与同 VM 恢复、正常 Worker 重启、下一 Run 切换模型及推理强度、丢失沙箱不自动替换，以及保留会话后的纯文字继续。真实模型调用只有 DeepSeek；第二供应商通过受控 HTTP 验证，没有使用 Anthropic 凭据。
 
 E2B 采用官方开源 Embed 固定提交，在 M5 专用 Colima/VZ 虚拟机启用 KVM。没有改动原有默认 Colima 环境或将上游虚拟化实现复制进产品。
+
+## 第二轮完整复核
+
+按 AGENTS.md 重读完整代码规范后，重新检查生产模块、关键测试、迁移与 CI；静态扫描范围仍为 110 个 TS/TSX 文件。未改变模块划分，也未修改规范原文。本轮确认并修复以下问题：
+
+| 级别 | 已复现的问题 | 修复位置与证据 |
+| --- | --- | --- |
+| P1 | 已登出或已过期的登录仍能通过原有 SSE 连接接收新内容 | sessions/stream.ts 重新核对登录；真实认证连接测试覆盖 logout 与 expiration |
+| P1 | 文件传输取消被当作远端效果已确认，pending 意图错误清除 | tasks/workspace.ts 仅认可命令适配器的终止确认；先复现 cancelled，再验证 recovery_required |
+| P1 | SDK 并发创建不同邀请时，同一 Workspace/用户可产生两条成员记录 | workspace-schema.ts 新增唯一索引；延续现有精确版本 SDK 补丁，在原有成员事务中加组织锁与成员检查；真实 SDK 回归先复现双成功，修复后一次成功、一次明确的业务拒绝 |
+| P2 | 不同用户并发接受邀请可突破 SDK 成员人数上限 | 将原有上限判断移至同一成员事务与组织锁内，真实 SDK 测试验证总成员数不会超过配置 |
+| P2 | 排队取消、过期 owner 等 PG 状态缺少通知，已有订阅永久显示旧状态 | 空闲时按授权读取的 Session revision 同步持久快照；覆盖无 Worker 事件的取消与隔离 |
+| P2 | 用户沙箱文件在 Pi 截断前被整份下载到可信 Runner | 直接消费官方流式读取，限制实际字节为 20 MiB；真实测试验证边界大小、超限拒绝和后续操作 |
+
+成员唯一约束通过新增 0006 迁移建立，不改写已应用迁移，不自动合并或删除重复成员；若现存数据违反约束，迁移明确失败，需人工核对。新的复合唯一索引同时覆盖 Workspace 查询，移除重复的单列 Workspace 索引。SDK 补丁仅扩大现有组织事务锁的使用，保持原生邀请协议与错误处理，升级时由 SDK 测试验证。
+
+文件读取使用 Node Web Stream 的 async iteration；提前结束会取消下载并释放连接，依据 [Node 官方文档](https://nodejs.org/api/webstreams.html#readablestreamvaluesoptions) 和已安装 E2B 2.64.0 的 FilesystemReadOpts/read 声明。本轮沙箱功能测试还确认了实际运行行为。
+
+订阅修复只在原模块增加登录能力和 revision 对账，不增加另一套事件总线或永久流日志。PG 快照不包含未提交草稿，因此明确客户端合并规则：终态优先；pending 累计文本不向后缩短。相关协议已经同步到 [云端 Agent 后端](../cloud-agent.md)。
 
 ## 保留的边界
 

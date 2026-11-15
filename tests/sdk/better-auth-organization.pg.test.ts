@@ -140,8 +140,93 @@ it('releases a claimed invitation when membership creation fails on PostgreSQL',
   }
 });
 
+it('keeps one membership when the SDK concurrently creates two invitations for one recipient', async () => {
+  const release = Promise.withResolvers<void>();
+  let arrivals = 0;
+  await using fixture = await openPgOrganizationFixture({ beforeCreateInvitation: meet });
+  const workspace = await fixture.createWorkspace();
+  const recipient = await fixture.createUser();
+  await fixture.db
+    .update(AUTHENTICATION_TABLES.user)
+    .set({ emailVerified: true })
+    .where(eq(AUTHENTICATION_TABLES.user.id, recipient.user.id));
+  const roles = ['member', 'admin'] as const;
+  const invitations = await Promise.all(roles.map(invite));
+  const outcomes = await Promise.allSettled(invitations.map(accept));
+  expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+  expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toMatchObject([
+    {
+      reason: { statusCode: 400, body: { code: 'USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION' } },
+    },
+  ]);
+  expect(
+    (await fixture.readMembers()).filter((member) => member.userId === recipient.user.id),
+  ).toHaveLength(1);
+
+  async function meet() {
+    arrivals += 1;
+    if (arrivals === 2) release.resolve();
+    await release.promise;
+  }
+
+  async function invite(role: (typeof roles)[number]) {
+    return fixture.auth.api.createInvitation({
+      headers: fixture.owner.headers,
+      body: { organizationId: workspace.id, email: recipient.user.email, role },
+    });
+  }
+
+  async function accept({ id }: { id: string }) {
+    return fixture.auth.api.acceptInvitation({
+      headers: recipient.headers,
+      body: { invitationId: id },
+    });
+  }
+});
+
+it('keeps the configured membership limit when distinct recipients accept concurrently', async () => {
+  const release = Promise.withResolvers<void>();
+  let arrivals = 0;
+  await using fixture = await openPgOrganizationFixture(
+    { beforeAcceptInvitation: meet },
+    { membershipLimit: 2 },
+  );
+  const workspace = await fixture.createWorkspace();
+  const recipients = await Promise.all([fixture.createUser(), fixture.createUser()]);
+  const invitations = await Promise.all(recipients.map(invite));
+  const outcomes = await Promise.allSettled(invitations.map(accept));
+  expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+  expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toMatchObject([
+    { reason: { statusCode: 403, body: { code: 'ORGANIZATION_MEMBERSHIP_LIMIT_REACHED' } } },
+  ]);
+  expect(await fixture.readMembers()).toHaveLength(2);
+
+  async function meet() {
+    arrivals += 1;
+    if (arrivals === 2) release.resolve();
+    await release.promise;
+  }
+
+  async function invite(recipient: Awaited<ReturnType<typeof fixture.createUser>>) {
+    await fixture.db
+      .update(AUTHENTICATION_TABLES.user)
+      .set({ emailVerified: true })
+      .where(eq(AUTHENTICATION_TABLES.user.id, recipient.user.id));
+    const invitation = await fixture.auth.api.createInvitation({
+      headers: fixture.owner.headers,
+      body: { organizationId: workspace.id, email: recipient.user.email, role: 'member' },
+    });
+    return { invitationId: invitation.id, headers: recipient.headers };
+  }
+
+  async function accept({ invitationId, headers }: { invitationId: string; headers: Headers }) {
+    return fixture.auth.api.acceptInvitation({ headers, body: { invitationId } });
+  }
+});
+
 async function openPgOrganizationFixture(
   organizationHooks: NonNullable<OrganizationOptions['organizationHooks']> = {},
+  options: Pick<OrganizationOptions, 'membershipLimit'> = {},
 ) {
   const prefix = `workspace-sdk-${randomUUID()}`;
   const ownerEmail = `${prefix}@example.com`;
@@ -166,7 +251,9 @@ async function openPgOrganizationFixture(
         schema: DATABASE_SCHEMA,
         transaction: true,
       }),
-      plugins: [organization({ organizationHooks, requireEmailVerificationOnInvitation: true })],
+      plugins: [
+        organization({ ...options, organizationHooks, requireEmailVerificationOnInvitation: true }),
+      ],
       logger: { disabled: true },
       telemetry: { enabled: false },
     },

@@ -1,5 +1,7 @@
 # Agent 运行适配
 
-当前只实现原生 CLI 的安装检测：Pi、Codex、Claude Code、OpenCode。检测不会启动这些程序，也不等于已经支持它们的执行协议。
+包根入口检测 Pi、Codex、Claude Code、OpenCode 的本机安装，不启动程序，也不表示它们的执行协议已经接入。
 
-Pi SDK/RPC 的具体组合仍遵循 ADR-0002 的验证与升级约定。这里不预制假的 Agent loop、会话恢复或云端实现。后续适配器在该包集中维护 SDK 解释、进程、取消与资源释放；不导入 server 的数据库和完整任务结构。
+`./pi` 使用完整 Pi SDK，集中模型目录、原生 SessionManager、检查点、事件映射、工具 operations、取消与资源释放。沿用公开接口，不改写模型循环。`./execution` 与 `./workspace` 提供平台执行观测、不透明 JSON 检查点和文件/命令能力；业务授权、工具清单、数据库和 E2B 组装留在 server。
+
+云端链路及恢复限制见 [实现说明](../../docs/cloud-agent.md)，SDK 升级和后续本地 Connector 的取舍见 [ADR-0002](../../docs/adr/0002-agent-execution-and-local-connector.md)。

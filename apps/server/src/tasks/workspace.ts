@@ -60,9 +60,10 @@ export function createRunWorkspace({
   async function recordEffect<TResult>(
     name: string,
     operation: () => Promise<TResult>,
-    operationSignal = signal,
+    commandSignal?: AbortSignal,
   ) {
-    operationSignal.throwIfAborted();
+    signal.throwIfAborted();
+    commandSignal?.throwIfAborted();
     const toolId = createId();
     await checkToolAuthority(() => startRunTool({ db, claim, tool: { id: toolId, name } }));
     try {
@@ -71,7 +72,7 @@ export function createRunWorkspace({
       return result;
     } catch (error) {
       // The command adapter throws the exact abort reason only after remote termination is confirmed.
-      if (operationSignal.aborted && error === operationSignal.reason) {
+      if (commandSignal?.aborted && error === commandSignal.reason) {
         await finishRunTool({ db, claim, toolId });
         throw error;
       }

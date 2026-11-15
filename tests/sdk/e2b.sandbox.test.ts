@@ -60,6 +60,25 @@ it('returns a nonzero exit as a command outcome', async () => {
   expect(await runCommand('exit 7')).toEqual({ exitCode: 7, text: '' });
 });
 
+it('bounds an untrusted file download before buffering its complete contents', async () => {
+  expect((await runCommand('truncate -s 20971521 oversized.bin')).exitCode).toBe(0);
+  const [download] = await Promise.allSettled([
+    workspace.readFile(`${workspace.directory}/oversized.bin`),
+  ]);
+  expect(download.status).toBe('rejected');
+  assert.ok(download.status === 'rejected');
+  assert.ok(download.reason instanceof Error);
+  expect(download.reason.message).toContain('exceeds the 20 MiB read limit');
+  expect((await runCommand('printf ready')).text).toBe('ready');
+});
+
+it('accepts a file at the read limit without truncating its bytes', async () => {
+  expect((await runCommand('truncate -s 20971520 read-limit.bin')).exitCode).toBe(0);
+  const content = await workspace.readFile(`${workspace.directory}/read-limit.bin`);
+  expect(content.byteLength).toBe(20 * 1_024 * 1_024);
+  expect(content.at(-1)).toBe(0);
+});
+
 it('uploads a file-backed Blob without converting it to an in-memory string', async () => {
   await using resources = new AsyncDisposableStack();
   const directory = await mkdtemp(join(tmpdir(), 'always-on-blob-test-'));

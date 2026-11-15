@@ -18,6 +18,8 @@ import {
 import {
   claimRun,
   completeRun,
+  createRunWorkspace,
+  type RunInterruption,
   recoverExpiredRuns,
   renewRun,
   startRunTool,
@@ -175,6 +177,43 @@ it('preserves unknown tool outcomes even when the SDK reports completion', async
     .from(AGENT_SESSIONS)
     .where(eq(AGENT_SESSIONS.id, fixture.session.id));
   expect(stored?.checkpoint).toBeNull();
+});
+
+it('does not acknowledge a remote write when only its transport was cancelled', async () => {
+  await using fixture = await openSessionFixture();
+  const claim = await fixture.claim('write-cancellation');
+  const transportError = new Error('Upload transport was cancelled');
+  const cancellation = new AbortController();
+  const interruptions: RunInterruption[] = [];
+  const workspace = createRunWorkspace({
+    db: fixture.db,
+    claim,
+    signal: cancellation.signal,
+    createId: randomUUID,
+    stop: (interruption) => interruptions.push(interruption),
+    workspace: {
+      directory: '/workspace',
+      readFile: async () => Buffer.alloc(0),
+      checkFile: async () => {},
+      createDirectory: async () => {},
+      executeCommand: async () => ({ exitCode: 0 }),
+      writeFile: async () => {
+        // Aborting an HTTP upload does not confirm that the guest has stopped applying it.
+        cancellation.abort(transportError);
+        throw transportError;
+      },
+    },
+  });
+  await expect(
+    workspace.writeFile({ path: '/workspace/proof.txt', content: 'partial' }),
+  ).rejects.toBe(transportError);
+  const run = await completeRun({
+    db: fixture.db,
+    claim,
+    completion: { status: 'cancelled', checkpoint: null },
+  });
+  expect(run.status).toBe('recovery_required');
+  expect(interruptions.map((interruption) => interruption.kind)).toEqual(['uncertain_effect']);
 });
 
 it('observes permission revocation before another side effect starts', async () => {

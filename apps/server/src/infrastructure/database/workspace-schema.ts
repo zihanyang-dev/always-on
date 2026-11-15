@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { index, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { AUTH_USERS } from './authentication-schema.js';
 
 /** Collaboration spaces mapped from the SDK's organization model. */
@@ -26,7 +26,8 @@ export const WORKSPACE_MEMBERS = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   },
   (table) => [
-    index('workspace_members_workspace_id_idx').on(table.organizationId),
+    // SDK preflight checks can race across distinct invitations for the same person.
+    uniqueIndex('workspace_members_identity').on(table.organizationId, table.userId),
     index('workspace_members_user_id_idx').on(table.userId),
   ],
 );

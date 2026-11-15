@@ -42,7 +42,7 @@ API 和 Worker 使用同一代码库，独立进程。Runner 是 Worker 内可�
 
 模型引用是 `{ provider, id }`，推理强度是模型目录返回的字符串。型号和强度由 Pi 的公开 API 提供，契约不复制厂商枚举。Agent 创建时先校验选择；每次输入在事务中保存 Session 当前配置，因此已排队和执行中的 Run 不受随后修改影响。尚无 Agent 更新/删除、Session 删除、历史分页或用户自带密钥管理接口。
 
-Owner/Admin/Member 可以创建和使用 Agent，Viewer 只读可见定义。Agent 可见性可选 private 或 workspace，省略时默认 private；私有 Agent 仅创建者可用。Session 始终只对其创建者开放，并要求当前 Workspace 成员权限；能查看共享 Agent 不等于能查看别人的对话。工具执行和租约轮询重新检查当前权限，订阅也持续复核成员身份。
+Owner/Admin/Member 可以创建和使用 Agent，Viewer 只读可见定义。Agent 可见性可选 private 或 workspace，省略时默认 private；私有 Agent 仅创建者可用。Session 始终只对其创建者开放，并要求当前 Workspace 成员权限；能查看共享 Agent 不等于能查看别人的对话。工具执行和租约轮询重新检查当前权限，订阅也持续复核登录有效性与成员身份；登出、会话过期或撤销后，已有连接结束收流。
 
 ## 输入与状态
 
@@ -60,6 +60,8 @@ API 和 Worker 的 AGENT_SESSION_DIRECTORY 必须指向相同的持久文件系�
 
 E2B 按需创建：纯文字或平台工具调用不创建 VM。Session 绑定 sandboxId；新建使用 Session ID 作幂等键，并记录 application、workspaceId、sessionId 元数据。Run 结束严格暂停，同一绑定下次恢复。绑定不存在时报告失败并保留旧身份，不能创建空 VM 冒充恢复；原生会话仍可用于后续纯文字输入。
 
+沙箱文件通过 E2B 官方流读取，单次最多 20 MiB，超限明确报错并取消下载；它限制实际收到的字节，不依赖会被并发修改的文件大小元数据。取消信号传给文件请求，但中断上传不等于确认远端写入停止。
+
 read/write/edit/bash 使用 Pi 官方工厂，启用工具的文件和命令操作全部委派远端；不启用仍访问 Runner 的其他工具。Bash 截断的大输出文件通过 Blob 转移到沙箱 `.agent-outputs`，移除 Runner 临时文件并修正模型可见路径。SDK 出错路径自身的临时文件策略仍归上游实现。
 
 命令取消向独立进程组发送信号并等待退出确认，覆盖普通子进程；不承诺撤销已产生的效果或终止另行脱离会话的守护进程。平台密钥、Pi 会话文件、主机环境和本机用户配置不提供给工具。
@@ -70,9 +72,9 @@ read/write/edit/bash 使用 Pi 官方工厂，启用工具的文件和命令操�
 
 ## SSE 对账规则
 
-Redis 保存约 2,000 条事件，最后一次写入后保留两小时。每个订阅使用自己的阻塞连接；游标过期、流丢失或游标超前时发 reset，携带 PG 快照。snapshot/reset 不表示模型执行结束；最终结果以 Run 状态及已确认消息为准。
+Redis 保存约 2,000 条事件，最后一次写入后保留两小时。每个订阅使用自己的阻塞连接，持续复核登录与资源访问；游标过期、流丢失或游标超前时发 reset，携带 PG 快照。空闲心跳对比 PG Session revision，变化时补发 snapshot，因此排队取消、租约过期和通知丢失不会让已连接客户端永久停留在旧状态。snapshot 可以在连接期间多次出现。snapshot/reset 不表示模型执行结束；最终结果以 Run 状态及已确认消息为准。
 
-update 包含 message、run 或 tool。草稿消息采用同 message.id 的累计文本替换，不是可重复拼接的 delta。客户端须按消息 ID 合并，completed/interrupted 不得被回放的 pending 覆盖；Run 按 ID 合并，终态不得被旧 running 覆盖。工具进度只是短期观测。快照之后仍可能回放旧事件，因此这些规则是接口约束。
+update 包含 message、run 或 tool。草稿消息采用同 message.id 的累计文本替换，不是可重复拼接的 delta。客户端须按消息 ID 合并，completed/interrupted 不得被回放的 pending 覆盖；两份 pending 合并时保留较长的累计文本，PG 快照不能清空已观察到的草稿；Run 按 ID 合并，终态不得被旧 running 覆盖。工具进度只是短期观测。快照之后仍可能回放旧事件，因此这些规则是接口约束。
 
 当前累计草稿方式便于补流，长文本的传输总量会增加，尚未做规模压测或消息分页。Redis 不是永久消息历史；PG 保存确认边界，未确认草稿可能在进程崩溃时丢失。access_revoked 结束订阅，unavailable 表示依赖失败，应重新连接并对账。
 

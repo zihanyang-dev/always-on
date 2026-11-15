@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { addAbortListener } from 'node:events';
 import { SESSION_EVENT_SCHEMA, SESSION_SNAPSHOT_SCHEMA } from '@always-on/contracts/agents';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { expect, it, vi } from 'vitest';
-import { WORKSPACE_MEMBERS } from '../../apps/server/src/infrastructure/database/index.js';
-import { startRunTool } from '../../apps/server/src/tasks/index.js';
+import {
+  AGENT_RUNS,
+  AUTHENTICATION_TABLES,
+  WORKSPACE_MEMBERS,
+} from '../../apps/server/src/infrastructure/database/index.js';
+import { claimRun, recoverExpiredRuns, startRunTool } from '../../apps/server/src/tasks/index.js';
 import { openExecutionFixture } from './execution-fixture.js';
 
 it('keeps health public and protects Agent endpoints with actual authentication', async () => {
@@ -172,6 +176,59 @@ it('stops delivering a subscription after current membership is revoked', async 
     method: 'GET',
   });
   expect(denied.status).toBe(404);
+});
+
+it.each(['logout', 'expiration'] as const)(
+  'ends an existing stream after login %s',
+  async (reason) => {
+    await using fixture = await openExecutionFixture();
+    await using stream = await fixture.openStream();
+    await stream.next('snapshot');
+    if (reason === 'logout') {
+      expect((await fixture.request({ path: '/api/auth/sign-out' })).status).toBe(200);
+    }
+    if (reason === 'expiration') {
+      await fixture.db
+        .update(AUTHENTICATION_TABLES.session)
+        .set({ expiresAt: sql`clock_timestamp() - interval '1 second'` })
+        .where(eq(AUTHENTICATION_TABLES.session.userId, fixture.userId));
+    }
+    await stream.next('access_revoked');
+  },
+);
+
+it('reconciles queued cancellation into an idle subscription without a Worker event', async () => {
+  await using fixture = await openExecutionFixture();
+  const submitted = await fixture.submit();
+  await using stream = await fixture.openStream();
+  expect(SESSION_SNAPSHOT_SCHEMA.parse((await stream.next('snapshot')).value).run?.status).toBe(
+    'queued',
+  );
+  const cancelled = await fixture.request({
+    path: `/api/sessions/${fixture.sessionId}/runs/${submitted.run.id}/cancel`,
+  });
+  expect(cancelled.status).toBe(200);
+  expect(SESSION_SNAPSHOT_SCHEMA.parse((await stream.next('snapshot')).value).run?.status).toBe(
+    'cancelled',
+  );
+});
+
+it('reconciles an expired owner into an idle subscription without replaying the Run', async () => {
+  await using fixture = await openExecutionFixture();
+  const submitted = await fixture.submit();
+  assert.ok(await claimRun({ db: fixture.db, runId: submitted.run.id, ownerToken: randomUUID() }));
+  await using stream = await fixture.openStream();
+  expect(SESSION_SNAPSHOT_SCHEMA.parse((await stream.next('snapshot')).value).run?.status).toBe(
+    'running',
+  );
+  await fixture.db
+    .update(AGENT_RUNS)
+    .set({ leaseUntil: sql`clock_timestamp() - interval '1 second'` })
+    .where(eq(AGENT_RUNS.id, submitted.run.id));
+  await recoverExpiredRuns(fixture.db);
+  expect(SESSION_SNAPSHOT_SCHEMA.parse((await stream.next('snapshot')).value).run?.status).toBe(
+    'recovery_required',
+  );
 });
 
 it('retains an unknown external result and refuses to replay it on a later input', async () => {

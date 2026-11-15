@@ -18,8 +18,8 @@ import type { Database } from '../infrastructure/database/index.js';
 import { SESSION_CURSOR_SCHEMA } from './events.js';
 import {
   cancelSessionRun,
-  canReadSession,
   createAgentSession,
+  readSessionRevision,
   readSessionSnapshot,
   submitSessionMessage,
   updateSessionConfiguration,
@@ -58,7 +58,8 @@ export function createSessionRoutes({
           sessionId: ctx.req.valid('param').sessionId,
           userId: ctx.get('userId'),
         };
-        if (!(await canReadSession(access))) return ctx.json({ code: 'not_found' }, 404);
+        if ((await readSessionRevision(access)) === null)
+          return ctx.json({ code: 'not_found' }, 404);
         return streamSSE(
           ctx,
           (stream) =>
@@ -67,6 +68,7 @@ export function createSessionRoutes({
               ...access,
               cursor: cursor.data,
               requestSignal: ctx.req.raw.signal,
+              hasValidLogin,
               ...events,
             }),
           async (error, stream) => {
@@ -75,6 +77,10 @@ export function createSessionRoutes({
             await stream.writeSSE({ event: 'unavailable', data: '{"code":"stream_unavailable"}' });
           },
         );
+
+        async function hasValidLogin() {
+          return (await getUser(ctx.req.raw.headers))?.id === access.userId;
+        }
       },
     );
   }

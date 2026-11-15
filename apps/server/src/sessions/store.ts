@@ -124,8 +124,8 @@ export async function readSessionSnapshot({
   });
 }
 
-/** Rechecks access during a long-lived subscription without loading the message history. */
-export async function canReadSession({
+/** Reads the current display revision only while the caller retains resource access. */
+export async function readSessionRevision({
   db,
   sessionId,
   userId,
@@ -133,10 +133,10 @@ export async function canReadSession({
   db: Database;
   sessionId: string;
   userId: string;
-}): Promise<boolean> {
+}): Promise<number | null> {
   return db.transaction(async (transaction) => {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
-    return Boolean(session);
+    return session?.revision ?? null;
   });
 }
 

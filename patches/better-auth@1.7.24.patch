@@ -196,3 +196,34 @@ index b6b6bc45f9733a4177311162f833d418482ae4cb..2eb54d60f68b6925f2e45928af4a31b1
  };
  const getOrganizationQuerySchema = z.optional(z.object({
  	organizationId: z.string().meta({ description: "The organization id to get" }).optional(),
+diff --git a/dist/plugins/organization/routes/crud-invites.mjs b/dist/plugins/organization/routes/crud-invites.mjs
+--- a/dist/plugins/organization/routes/crud-invites.mjs
++++ b/dist/plugins/organization/routes/crud-invites.mjs
+@@ -276,11 +276,8 @@
+ 		advancedGenerateId: getAdvancedGenerateId(ctx.context.options.advanced),
+ 		databaseGenerateId: ctx.context.options.advanced?.database?.generateId
+ 	}) && !session.user.emailVerified) throw APIError.from("FORBIDDEN", ORGANIZATION_ERROR_CODES.EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION);
+-	const membershipLimit = ctx.context.orgOptions?.membershipLimit || 100;
+-	const membersCount = await adapter.countMembers({ organizationId: invitation.organizationId });
+ 	const organization = await adapter.findOrganizationById(invitation.organizationId);
+ 	if (!organization) throw APIError.from("BAD_REQUEST", ORGANIZATION_ERROR_CODES.ORGANIZATION_NOT_FOUND);
+-	if (membersCount >= (typeof membershipLimit === "number" ? membershipLimit : await membershipLimit(session.user, organization))) throw APIError.from("FORBIDDEN", ORGANIZATION_ERROR_CODES.ORGANIZATION_MEMBERSHIP_LIMIT_REACHED);
+ 	if (options?.organizationHooks?.beforeAcceptInvitation) await options?.organizationHooks.beforeAcceptInvitation({
+ 		invitation,
+ 		user: session.user,
+@@ -293,6 +290,15 @@
+ 	});
+ 	if (!acceptedI) throw APIError.from("BAD_REQUEST", ORGANIZATION_ERROR_CODES.INVITATION_NOT_FOUND);
+ 	const member = await runWithTransaction(ctx.context.adapter, async () => {
++		// Distinct invitations can pass the same preflight check; decide membership under the organization lock.
++		await adapter.lockOrganization(acceptedI.organizationId);
++		if (await adapter.findMemberByOrgId({
++			userId: session.user.id,
++			organizationId: acceptedI.organizationId
++		})) throw APIError.from("BAD_REQUEST", ORGANIZATION_ERROR_CODES.USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION);
++		const membershipLimit = ctx.context.orgOptions?.membershipLimit || 100;
++		const membersCount = await adapter.countMembers({ organizationId: invitation.organizationId });
++		if (membersCount >= (typeof membershipLimit === "number" ? membershipLimit : await membershipLimit(session.user, organization))) throw APIError.from("FORBIDDEN", ORGANIZATION_ERROR_CODES.ORGANIZATION_MEMBERSHIP_LIMIT_REACHED);
+ 		if (ctx.context.orgOptions.teams && ctx.context.orgOptions.teams.enabled && "teamId" in acceptedI && acceptedI.teamId) {
+ 			const teamIds = acceptedI.teamId.split(",");
+ 			const onlyOne = teamIds.length === 1;
