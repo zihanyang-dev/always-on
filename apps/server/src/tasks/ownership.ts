@@ -59,6 +59,7 @@ export async function claimRun({
     const session = await lockSession(transaction, candidate.sessionId);
     if (!session) return null;
 
+    // A duplicate wake-up cannot bypass a current owner or an unresolved earlier effect.
     const [blocked] = await transaction
       .select({ id: AGENT_RUNS.id })
       .from(AGENT_RUNS)
@@ -71,6 +72,7 @@ export async function claimRun({
       .limit(1);
     if (blocked) return null;
 
+    // Queue delivery order is advisory; PostgreSQL decides which input may execute next.
     const [next] = await transaction
       .select()
       .from(AGENT_RUNS)
@@ -79,6 +81,7 @@ export async function claimRun({
       .limit(1);
     if (!next || next.id !== runId) return null;
 
+    // Input may have waited in the queue after its submitter lost execution permission.
     const agent = await readUsableAgent({
       transaction,
       agentId: session.agentId,
@@ -149,6 +152,7 @@ export async function renewRun({
       userId: claim.userId,
     });
     const shouldCancel = run.status === 'cancelling' || !agent;
+    // A cancelling owner stays leased until its SDK and sandbox have finished cleanup.
     const [renewed] = await transaction
       .update(AGENT_RUNS)
       .set({ leaseUntil: getLeaseDeadline(), status: shouldCancel ? 'cancelling' : 'running' })
@@ -163,25 +167,21 @@ export async function renewRun({
 /** Finds durable dispatch intents independently of the state of Redis or a previous dispatcher. */
 export async function listQueuedRuns(db: Database): Promise<readonly string[]> {
   const blocker = alias(AGENT_RUNS, 'blocking_run');
+  const blockingRuns = db
+    .select({ id: blocker.id })
+    .from(blocker)
+    .where(
+      and(
+        eq(blocker.sessionId, AGENT_RUNS.sessionId),
+        inArray(blocker.status, ['running', 'cancelling', 'recovery_required']),
+      ),
+    );
+  const dispatchFilter = and(eq(AGENT_RUNS.status, 'queued'), notExists(blockingRuns));
+
   const rows = await db
     .selectDistinctOn([AGENT_RUNS.sessionId], { id: AGENT_RUNS.id })
     .from(AGENT_RUNS)
-    .where(
-      and(
-        eq(AGENT_RUNS.status, 'queued'),
-        notExists(
-          db
-            .select({ id: blocker.id })
-            .from(blocker)
-            .where(
-              and(
-                eq(blocker.sessionId, AGENT_RUNS.sessionId),
-                inArray(blocker.status, ['running', 'cancelling', 'recovery_required']),
-              ),
-            ),
-        ),
-      ),
-    )
+    .where(dispatchFilter)
     .orderBy(AGENT_RUNS.sessionId, AGENT_RUNS.createdAt, AGENT_RUNS.id)
     .limit(100);
 
@@ -211,6 +211,7 @@ async function recoverExpiredRun(
 
   async function recover(transaction: DatabaseTransaction) {
     await lockSession(transaction, sessionId);
+    // A renewal may have won since the scan; check expiry again under the Session lock.
     const recovered = await transaction
       .update(AGENT_RUNS)
       .set({
@@ -237,6 +238,7 @@ async function recoverExpiredRun(
 }
 
 async function lockSession(transaction: DatabaseTransaction, sessionId: string) {
+  // Execution writes acquire this row before touching Run state, preserving one lock order.
   const [session] = await transaction
     .select()
     .from(AGENT_SESSIONS)

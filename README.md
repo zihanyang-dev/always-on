@@ -37,6 +37,8 @@ pnpm cli agents --json
 
 集成测试需要已迁移的 PG 和 Redis。浏览器测试自行启动 API 与 Web，使用独立测试进程；运行前释放本项目的 `3001` 和 `5173` 端口。CLI 命令使用已构建产物，修改后运行 `pnpm build`。
 
+`pnpm check` 使用 Biome 和 TypeScript。生产代码的环境变量只能在配置入口读取；浏览器源码禁止导入 Node 运行时模块和 Agent 执行包。默认导出仅对框架配置文件开放。职责划分、注释准确性和函数可读性仍需人工审查，详见[本轮整理记录](docs/reviews/codebase-style-2026-11-15.md)。
+
 `db:generate` 生成迁移；`db:migrate` 应用已提交迁移。生产迁移单独执行，API/Worker 启动不会抢跑迁移。CI 在 PR 和 push 时执行检查、单元测试、构建、真实基础设施测试与桌面/移动浏览器测试，不发布部署。
 
 ## 已实现与下一步
@@ -44,11 +46,11 @@ pnpm cli agents --json
 - 已实现：pnpm 工作区、严格 TS、Biome、独立环境解析、健康接口、公开配置、中英文 Web 页面、CLI 状态查询与本地程序检测。
 - 已实现：Google/GitHub/邮箱密码认证后端、验证与重置邮件、持久登录会话、当前用户接口和 Redis 原子限流；登录前端尚未接入。
 - 已实现：Workspace 后端、Owner/Admin/Member/Viewer、成员管理、邮箱邀请生命周期与跨空间授权，使用 Better Auth organization 的官方接口。并发与故障边界见[实现说明](docs/workspaces-and-authorization.md)。
-- 已实现：PG Inbox 输入校验和并发去重；真实 BullMQ 诊断 Worker、PG 检查和带过期时间的 Redis Stream。
+- 已实现：Session 消息校验、PG 原子接收与并发去重；真实 BullMQ Agent Worker 和带过期时间的 Redis Streams。
 - 已实现：云端 Agent/Session/Run、模型和推理强度选择、完整 Pi SDK、独立 E2B 沙箱、业务工具、原生会话接续、取消、PG 执行租约、Redis Streams/SSE 补流。M5 本机通过官方开源 E2B Embed + KVM 运行真实 Firecracker 沙箱；一期真实模型调用仅 DeepSeek。
 - 尚未实现：登录及 Workspace 前端、Router、长期 Task、设备连接、Timers、跨会话 Memory 整理、审批、Outbox 和对象存储。执行边界与验证范围见[云端 Agent 后端](docs/cloud-agent.md)。
 
-Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；后台扫描 PG 再唤醒 BullMQ。通用 Inbox 内部入口仍只接受可信调用者提供的 scope。诊断队列不承担产品任务。
+Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；后台扫描 PG 再唤醒 BullMQ。未配置云端执行能力时，Worker 直接退出，API 的认证和健康接口仍可使用。
 
 ## 文档
 
@@ -61,5 +63,6 @@ Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；�
 - [云端 Agent 后端与 API](docs/cloud-agent.md)
 - [本机 E2B Embed 部署](deploy/e2b/README.md)
 - [沙箱研究](docs/research/sandbox-design.md)
+- [Lauren Tan 演讲全程笔记与仓库应用](docs/research/lauren-tan-agent-trust.md)
 
 `AGENTS.md` 保持简短，原始 TypeScript 指南保持完整。

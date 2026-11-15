@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { addAbortListener } from 'node:events';
+import { addAbortListener, once } from 'node:events';
+import { createConnection, createServer, type Socket } from 'node:net';
+import { promisify } from 'node:util';
 import { SESSION_EVENT_SCHEMA, SESSION_SNAPSHOT_SCHEMA } from '@always-on/contracts/agents';
 import { and, eq, sql } from 'drizzle-orm';
 import { expect, it, vi } from 'vitest';
+import { parseWorkerEnv } from '../../apps/server/src/bootstrap/env.js';
 import {
   AGENT_RUNS,
   AUTHENTICATION_TABLES,
+  INBOX_EVENTS,
   WORKSPACE_MEMBERS,
 } from '../../apps/server/src/infrastructure/database/index.js';
 import { claimRun, recoverExpiredRuns, startRunTool } from '../../apps/server/src/tasks/index.js';
@@ -28,6 +32,27 @@ it('keeps health public and protects Agent endpoints with actual authentication'
   expect(denied.status).toBe(401);
   const catalog = await fixture.request({ path: '/api/agents/models', method: 'GET' });
   expect(JSON.stringify(await catalog.json())).not.toContain('apiKey');
+});
+
+it.each([
+  { sourceEventId: 'invalid-input' },
+  { sourceEventId: 'invalid-input', text: '' },
+  { sourceEventId: 'invalid-input', text: 'Hello', scopeId: 'forged-scope' },
+])('rejects invalid message input before creating durable work: %j', async (body) => {
+  await using fixture = await openExecutionFixture();
+  const response = await fixture.request({
+    path: `/api/sessions/${fixture.sessionId}/messages`,
+    body,
+  });
+  expect(response.status).toBe(400);
+  const snapshot = await fixture.snapshot();
+  expect(snapshot.run).toBeNull();
+  expect(snapshot.messages).toEqual([]);
+  const events = await fixture.db
+    .select()
+    .from(INBOX_EVENTS)
+    .where(eq(INBOX_EVENTS.scopeId, fixture.sessionId));
+  expect(events).toEqual([]);
 });
 
 it('dispatches an input committed before the Worker starts and persists its final message', async () => {
@@ -254,9 +279,93 @@ it('retains an unknown external result and refuses to replay it on a later input
   expect(denied.status).toBe(409);
 });
 
+it('releases the real Agent Worker after its queue transport disappears', async () => {
+  await using fixture = await openExecutionFixture();
+  await using relay = await openRedisRelay(parseWorkerEnv(process.env).REDIS_URL);
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const errors: Error[] = [];
+  await using worker = await fixture.startWorker(execute, {
+    redisUrl: relay.url,
+    onError: (error) => errors.push(error),
+  });
+
+  try {
+    await fixture.submit();
+    await started.promise;
+    // Only the Worker's sockets disappear; fixture HTTP, PG and Redis retain their own connections.
+    await relay[Symbol.asyncDispose]();
+  } finally {
+    release.resolve();
+  }
+
+  await expect(worker[Symbol.asyncDispose]()).rejects.toMatchObject({
+    message: 'Agent Worker shutdown failed',
+    errors: expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringContaining('queue did not drain within') }),
+    ]),
+  });
+  expect(errors.length).toBeGreaterThan(0);
+  expect((await fixture.snapshot()).run?.status).toBe('cancelled');
+
+  async function execute() {
+    started.resolve();
+    await release.promise;
+    return { status: 'cancelled' as const, checkpoint: null };
+  }
+});
+
 async function waitForCancellation(signal: AbortSignal) {
   if (signal.aborted) return;
+
   const completion = Promise.withResolvers<void>();
   using _listener = addAbortListener(signal, () => completion.resolve());
   await completion.promise;
+}
+
+async function openRedisRelay(target: string) {
+  const targetUrl = new URL(target);
+  const sockets = new Set<Socket>();
+  const server = createServer(acceptConnection);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const relayUrl = new URL(targetUrl);
+  relayUrl.hostname = '127.0.0.1';
+  relayUrl.port = String(address.port);
+  let closing: Promise<void> | undefined;
+  return { url: relayUrl.href, [Symbol.asyncDispose]: dispose };
+
+  function acceptConnection(client: Socket) {
+    const upstream = createConnection({
+      host: targetUrl.hostname,
+      port: Number(targetUrl.port || 6379),
+    });
+    sockets.add(client);
+    sockets.add(upstream);
+    client.pipe(upstream).pipe(client);
+    // Closing the peer propagates transport errors to the real Redis client under test.
+    client.on('error', () => upstream.destroy());
+    upstream.on('error', () => client.destroy());
+    client.on('close', () => {
+      sockets.delete(client);
+      upstream.destroy();
+    });
+    upstream.on('close', () => {
+      sockets.delete(upstream);
+      client.destroy();
+    });
+  }
+
+  function dispose() {
+    closing ??= closeConnections();
+    return closing;
+  }
+
+  async function closeConnections() {
+    const closed = promisify(server.close.bind(server))();
+    for (const socket of sockets) socket.destroy();
+    await closed;
+  }
 }

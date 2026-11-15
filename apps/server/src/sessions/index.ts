@@ -1,5 +1,4 @@
 export { publishSessionEvent } from './events.js';
-export { appendInboxEvent, type InboxAcceptance } from './inbox.js';
 export { createSessionRoutes } from './routes.js';
 export {
   cancelSessionRun,

@@ -35,6 +35,7 @@ export async function executePi(
 
   const execution = new PiExecutionResources(conversation.sdk, context);
   let outcome: PromiseSettledResult<void>;
+  // Delay interpreting prompt failure until event delivery and SDK abort work have settled.
   {
     await using _resources = execution;
     // Product input cannot invoke deployment-local commands or prompt templates.
@@ -86,6 +87,7 @@ class PiExecutionResources implements AsyncDisposable {
 
   async [Symbol.asyncDispose](): Promise<void> {
     using _cancellation = this.#cancellation;
+    // Unsubscribe before joining so teardown has a fixed set of accepted observations.
     this.#unsubscribe();
     await Promise.all(this.#notifications.values());
     await this.#stopping;
@@ -126,6 +128,7 @@ class PiExecutionResources implements AsyncDisposable {
     try {
       await this.#writer.write(event);
     } catch (error) {
+      // A receiver rejection remains a failure even if the SDK subsequently reports an abort.
       this.#failures.add(getExecutionError(error));
       this.#requestStop();
     } finally {
@@ -134,6 +137,7 @@ class PiExecutionResources implements AsyncDisposable {
   }
 
   #requestStop = () => {
+    // SDK callbacks and host cancellation can converge here; abort must be joined exactly once.
     this.#stopping ??= this.#stopSdk();
     void this.#stopping;
   };

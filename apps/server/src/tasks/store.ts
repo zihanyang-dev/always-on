@@ -46,6 +46,7 @@ export async function bindRunSandbox({
   await db.transaction(bind);
 
   async function bind(transaction: DatabaseTransaction): Promise<void> {
+    // A later attempt must reconnect this same VM even if this owner fails after binding it.
     await requireOwnership(transaction, claim);
     await transaction
       .update(AGENT_SESSIONS)
@@ -72,6 +73,7 @@ export async function writeRunMessage({
   return db.transaction(write);
 
   async function write(transaction: DatabaseTransaction): Promise<AgentMessage> {
+    // Stable Run ordinals make repeated message boundaries replace the same durable display row.
     await requireOwnership(transaction, claim);
     const [saved] = await transaction
       .insert(AGENT_MESSAGES)
@@ -109,6 +111,7 @@ export async function startRunTool({
   return db.transaction(start);
 
   async function start(transaction: DatabaseTransaction): Promise<RunToolAccess> {
+    // Commit intent before dispatch so a lost acknowledgement remains visible after a crash.
     const access = await readRunAuthority(transaction, claim);
     if (access.status === 'cancel_requested') return access;
 
@@ -131,6 +134,7 @@ export async function authorizeRunTool({
   db: Database;
   claim: RunClaim;
 }): Promise<RunToolAccess> {
+  // Reads skip effect receipts, but cannot reuse permission captured when the Run was claimed.
   return db.transaction((transaction) => readRunAuthority(transaction, claim));
 }
 
@@ -147,6 +151,7 @@ export async function finishRunTool({
   await db.transaction(finish);
 
   async function finish(transaction: DatabaseTransaction): Promise<void> {
+    // Revocation cannot erase an observed result; ownership still fences the reporting attempt.
     await requireOwnership(transaction, claim);
     const acknowledged = await transaction
       .update(AGENT_TOOL_CALLS)
@@ -178,6 +183,7 @@ export async function completeRun({
       shouldCancel && completion.status === 'completed'
         ? { ...completion, status: 'cancelled' as const }
         : completion;
+    // SDK success cannot confirm an external effect whose receipt is still pending.
     const [pending] = await transaction
       .select({ id: AGENT_TOOL_CALLS.id })
       .from(AGENT_TOOL_CALLS)
@@ -206,6 +212,7 @@ export async function completeRun({
       .set({ state: 'interrupted' })
       .where(and(eq(AGENT_MESSAGES.runId, claim.run.id), eq(AGENT_MESSAGES.state, 'pending')));
 
+    // An uncertain completion preserves the previous confirmed continuation.
     const checkpoint = 'checkpoint' in result ? result.checkpoint : null;
     await transaction
       .update(AGENT_SESSIONS)

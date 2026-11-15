@@ -80,7 +80,9 @@ update 包含 message、run 或 tool。草稿消息采用同 message.id 的累�
 
 ## 配置、启动与验证
 
-先按 [本机 E2B](../deploy/e2b/README.md) 启动官方 Embed。`.env.local` 配置 DeepSeek、E2B API key 和绝对会话目录；模型凭据只由 bootstrap 启动时解析。默认仅 DeepSeek；多供应商部署使用 MODEL_PROVIDERS 引用各密钥的环境变量名，不能把密钥写进产品配置或 API 响应。无模型凭据时关闭 Agent 执行接口，原有认证和健康接口仍可用。
+先按 [本机 E2B](../deploy/e2b/README.md) 启动官方 Embed。`.env.local` 配置 DeepSeek、E2B API key 和绝对会话目录；模型凭据只由 bootstrap 启动时解析。默认仅 DeepSeek；多供应商部署使用 MODEL_PROVIDERS 引用各密钥的环境变量名，不能把密钥写进产品配置或 API 响应。无云端执行配置时关闭 Agent 执行接口，Worker 直接退出，原有认证和健康接口仍可用。
+
+Worker 停止时先等待 SDK 与沙箱资源收尾，再启动 5 秒队列 I/O 退出期限。期限到达只断开它拥有的 Redis 连接，并报告收尾错误。这个期限不截断 SDK/沙箱清理，也不把连接丢失视作执行成功。
 
 ```sh
 pnpm infra:up

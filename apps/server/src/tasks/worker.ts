@@ -1,14 +1,17 @@
+import { addAbortListener } from 'node:events';
 import { setTimeout as waitInterval } from 'node:timers/promises';
+import type { ExecutionContext } from '@always-on/agent-runtime/execution';
 import { Queue, Worker } from 'bullmq';
 import { z } from 'zod';
 import type { Database } from '../infrastructure/database/index.js';
 import { openRedis } from '../infrastructure/redis/index.js';
 import { publishSessionEvent } from '../sessions/index.js';
 import { executeQueuedRun, type RunExecutor } from './execute.js';
-import { listQueuedRuns, recoverExpiredRuns } from './ownership.js';
+import { listQueuedRuns, type RunClaim, recoverExpiredRuns } from './ownership.js';
 
 const RUN_QUEUE_NAME = 'agent-runs';
 const RUN_JOB_SCHEMA = z.strictObject({ runId: z.uuid() });
+const QUEUE_DRAIN_TIMEOUT_MS = 5_000;
 
 /** A running queue consumer; infrastructure failure wakes its owning process. */
 export interface AgentWorkerResource extends AsyncDisposable {
@@ -33,6 +36,7 @@ export async function openAgentWorker({
   createId: () => string;
   onError: (error: Error) => void;
 }): Promise<AgentWorkerResource> {
+  const executions = new Set<Promise<void>>();
   await using startup = new AsyncDisposableStack();
   const consumer = startup.use(openRedis({ url: redisUrl, role: 'worker', onError }));
   const progress = startup.use(openRedis({ url: redisUrl, role: 'api', onError }));
@@ -53,7 +57,7 @@ export async function openAgentWorker({
     concurrency,
     autorun: false,
   });
-  startup.defer(() => worker.close());
+  startup.defer(closeWorker);
   worker.on('error', onError);
   worker.on('failed', (job, error) =>
     onError(new Error(`Agent queue job ${job?.id ?? 'unknown'} failed`, { cause: error })),
@@ -76,11 +80,26 @@ export async function openAgentWorker({
       db,
       runId,
       ownerToken: createId(),
-      execute,
+      execute: executeRun,
       signal: stopping.signal,
       onError,
       publish: (input) => publishSessionEvent({ redis: progress.client, prefix, ...input }),
     });
+  }
+
+  async function executeRun(claim: RunClaim, context: ExecutionContext) {
+    // An already-fetched queue callback can reach this boundary after shutdown has begun.
+    if (stopping.signal.aborted) return { status: 'cancelled' as const, checkpoint: null };
+
+    const settled = Promise.withResolvers<void>();
+    executions.add(settled.promise);
+    try {
+      return await execute(claim, context);
+    } finally {
+      // This barrier tracks lifetime only; failures still propagate to BullMQ's failed handler.
+      settled.resolve();
+      executions.delete(settled.promise);
+    }
   }
 
   async function dispatchRuns() {
@@ -116,6 +135,32 @@ export async function openAgentWorker({
     } catch (error) {
       fatal.resolve(new Error('Agent queue consumer failed', { cause: error }));
     }
+  }
+
+  async function closeWorker() {
+    // Stop accepting work, then join SDK/sandbox cleanup before starting the queue I/O deadline.
+    await worker.pause(true);
+    await Promise.all(executions);
+    const deadline = AbortSignal.timeout(QUEUE_DRAIN_TIMEOUT_MS);
+    using _deadline = addAbortListener(deadline, disconnectQueue);
+    const [closed] = await Promise.allSettled([worker.close()]);
+    if (deadline.aborted)
+      throw new Error(
+        `Agent Worker ${prefix} queue did not drain within ${QUEUE_DRAIN_TIMEOUT_MS}ms`,
+        {
+          cause: closed.status === 'rejected' ? closed.reason : deadline.reason,
+        },
+      );
+    if (closed.status === 'fulfilled') return;
+    if (closed.reason instanceof Error) throw closed.reason;
+
+    throw new Error(`Agent Worker ${prefix} queue shutdown failed`, { cause: closed.reason });
+  }
+
+  function disconnectQueue() {
+    // Both clients belong to this Worker; HTTP subscriptions and other workers remain connected.
+    consumer.disconnect();
+    progress.disconnect();
   }
 
   async function dispose() {

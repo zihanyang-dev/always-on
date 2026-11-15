@@ -33,15 +33,30 @@
     "enabled": true,
     "rules": {
       "complexity": {
-        "noBannedTypes": "error"
+        "noBannedTypes": "error",
+        "useMaxParams": {
+          "level": "error",
+          "options": {
+            "max": 3
+          }
+        }
       },
       "style": {
         "useBlockStatements": "off",
         "useImportType": "error",
-        "noNonNullAssertion": "error"
+        "noNonNullAssertion": "error",
+        "noDefaultExport": "error",
+        "noEnum": "error",
+        "noNamespace": "error",
+        "noNestedTernary": "error",
+        "noParameterProperties": "error",
+        "noProcessEnv": "error",
+        "noUselessElse": "error",
+        "useExportType": "error"
       },
       "suspicious": {
-        "noExplicitAny": "error"
+        "noExplicitAny": "error",
+        "noTsIgnore": "error"
       },
       "preset": "recommended"
     }
@@ -52,5 +67,57 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.config.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDefaultExport": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/server/src/bootstrap/api.ts",
+        "apps/server/src/bootstrap/worker.ts",
+        "apps/server/src/bootstrap/migrate.ts",
+        "apps/server/drizzle.config.ts",
+        "apps/cli/src/bootstrap.ts",
+        "tests/**/*.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noProcessEnv": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/src/**/*.ts", "apps/web/src/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "error"
+          },
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@always-on/agent-runtime", "@always-on/agent-runtime/**"],
+                    "message": "Browser code uses public contracts; keep Node capabilities and execution SDKs in server or CLI code."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

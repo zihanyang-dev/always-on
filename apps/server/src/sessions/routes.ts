@@ -99,6 +99,7 @@ export function createSessionRoutes({
 
   async function configure(ctx: ConfigureContext) {
     const configuration = ctx.req.valid('json');
+    // A valid effort string may still be unsupported by this particular provider and model.
     if (!isAvailableConfiguration({ configuration, models: catalog.models }))
       return ctx.json({ code: 'unsupported_model_configuration' }, 400);
 
@@ -114,6 +115,7 @@ export function createSessionRoutes({
   }
 
   async function submit(ctx: SubmitContext) {
+    // A lost HTTP response must not create another Run; retries reuse the committed source ID.
     const result = await submitSessionMessage({
       db,
       sessionId: ctx.req.valid('param').sessionId,
@@ -139,6 +141,7 @@ export function createSessionRoutes({
   }
 
   async function cancel(ctx: CancelContext) {
+    // Persist intent so cancellation survives a dropped HTTP response or a Worker restart.
     const { sessionId, runId } = ctx.req.valid('param');
     const run = await cancelSessionRun({ db, sessionId, runId, userId: ctx.get('userId') });
     if (!run) return ctx.json({ code: 'not_found' }, 404);

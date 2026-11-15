@@ -1,6 +1,6 @@
 # 全仓代码审查与整理
 
-日期：2026-11-15。以本轮完成后的源码为准。
+日期：2026-11-15。首轮审查对应提交 29a059e；后续整理在文末单列。
 
 按根目录 AGENTS.md 重读完整 TypeScript 规范，并对照 `/Users/zane/Dev/pexo-agent-refactor/agent/src/harness/openai/execute.ts`、Session 资源对象和 PostgreSQL admission 的写法。参考重点是清楚的执行主线、明确的资源所有者和逻辑段落，具体实现仍遵守本仓库规范。
 
@@ -79,3 +79,34 @@ SSE 测试订阅移为独立资源工厂，拥有读取缓冲、取消和 reader
 再次审查调用处和实现，确认新增的类型与内部操作只表达实际职责；对照最终差异核对权限、锁、取消、幂等和资源释放顺序。AST 检查未发现生产代码中的 any、非空断言、强制类型断言、超过约定的块/回调嵌套或相对导入循环；JSX 返回类型按规范推断。
 
 本轮是代码结构审查与回归验证。生产容量、完整进程强杀矩阵、SDK 跨版本历史迁移、未知副作用自动对账和资源回收仍属于 [现有实现边界](../cloud-agent.md)。
+
+## 追加整理：注释、废弃实现与自动检查
+
+首轮仍保留了通用 Inbox 入口与诊断 Worker。再次核对调用关系后，确认它们只有旧测试调用，正式 Session/Run 链路已承担相应职责。本轮删除这两条生产路径及仅服务于它们的测试；输入校验、跨 Session 来源隔离和 Redis 断连回归改为验证真实业务链路。无云端执行配置时，Worker 直接退出，认证和健康接口仍可使用。
+
+补充英文函数内注释，说明 Session 锁与输入快照、租约检查时机、工具意图和回执、权限撤销后的事实保存、SDK 停止以及实时传输丢失后的快照补偿。注释需要对应实现，不能替代规则或为绕过错误辩护。
+
+listQueuedRuns 的相关子查询和派发条件改用具名局部变量，减少连续多层括号收尾。仍然只执行一条 SQL，未增加转发函数或查询。
+
+迁移断连测试时发现，正式 Agent Worker 可能无限等待已失联的队列。收尾现在先停止新执行、等待 SDK/沙箱清理，再给队列 I/O 5 秒退出期限；超时只断开自身 Redis 客户端并报告错误。执行清理与队列传输的期限分开管理，真实断连测试确认 PG 取消结果和失败报告。
+
+### Biome 的实际约束
+
+使用现有 Biome 2.6.7，不增加其他 lint 引擎或自定义正则检查。
+
+| 目标 | 规则或范围 |
+| --- | --- |
+| 参数最多三个 | complexity/useMaxParams |
+| 禁用 enum、namespace 和构造器参数属性 | style/noEnum、noNamespace、noParameterProperties |
+| 避免嵌套三元、退出后的 else | style/noNestedTernary、noUselessElse |
+| 显式类型导出、禁用 ts-ignore | style/useExportType、suspicious/noTsIgnore |
+| 具名导出 | style/noDefaultExport；框架配置文件例外 |
+| 环境读取归属启动入口 | style/noProcessEnv；精确列出启动文件，测试例外 |
+| 浏览器不依赖 Node 执行能力 | Web src 启用 correctness/noNodejsModules；该官方规则允许纯类型导入 |
+| 浏览器不依赖 Agent 执行实现 | Web src 启用 style/noRestrictedImports，限制 agent-runtime 包及子路径 |
+
+除全仓检查外，用临时正反例核对了 19 个场景，包括 Node 子模块、再导出、Agent 子路径、合法公开契约、配置默认导出和启动入口。临时探针没有进入仓库或构成另一套 lint。规则依据 [Biome 官方 Node 模块规则](https://biomejs.dev/linter/rules/no-nodejs-modules/)与[导入限制规则](https://biomejs.dev/linter/rules/no-restricted-imports/)，并以实际安装版本运行验证。
+
+函数职责、逻辑段落、注释准确性及块/回调嵌套仍需人工审查。没有加入括号计数、注释数量或按行数强拆文件的检查。原始 TypeScript 规范及 AGENTS.md 保持完整。
+
+追加整理后的 pnpm check、45 个单元测试、57 个真实基础设施集成测试、9 个真实 E2B 测试、2 个真实 DeepSeek/E2B 测试、构建和 12 个浏览器测试均通过。演讲整场笔记与对本仓库的判断见 [Lauren Tan：Agent 的信任来自工程环境](../research/lauren-tan-agent-trust.md)。

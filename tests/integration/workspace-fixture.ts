@@ -45,6 +45,11 @@ const INVITATION_RESPONSE_SCHEMA = z.object({
 const MEMBER_RESPONSE_SCHEMA = z.object({ id: z.string(), userId: z.string(), role: z.string() });
 
 type WorkspaceActor = { id: string; email: string; headers: Headers; clientIp: string };
+type WorkerOptions = {
+  createId?: () => string;
+  redisUrl?: string;
+  onError?: (error: Error) => void;
+};
 /** One HTTP request through the application fixture, with optional real login credentials. */
 export type WorkspaceRequest = {
   path: string;
@@ -61,7 +66,7 @@ export interface WorkspaceFixture extends AsyncDisposable {
   readonly db: Database;
   readonly startWorker: (
     execute: RunExecutor,
-    options?: { createId?: () => string },
+    options?: WorkerOptions,
   ) => Promise<AgentWorkerResource>;
   readonly request: (input: WorkspaceRequest) => Promise<Response>;
   readonly createActor: (label: string) => Promise<WorkspaceActor>;
@@ -318,16 +323,20 @@ export async function openWorkspaceFixture({
 
   function startWorker(
     execute: RunExecutor,
-    { createId = randomUUID }: { createId?: () => string } = {},
+    {
+      createId = randomUUID,
+      redisUrl = ENV.REDIS_URL,
+      onError: reportWorkerError = onError,
+    }: WorkerOptions = {},
   ) {
     return openAgentWorker({
       db: database.db,
-      redisUrl: ENV.REDIS_URL,
+      redisUrl,
       prefix,
       concurrency: 2,
       execute,
       createId,
-      onError,
+      onError: reportWorkerError,
     });
   }
 

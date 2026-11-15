@@ -91,6 +91,29 @@ it('deduplicates concurrent input and rejects a changed payload with the same id
   expect(snapshot.messages).toHaveLength(1);
 });
 
+it('keeps repeated source identities independent across private conversations', async () => {
+  await using fixture = await openSessionFixture();
+  const second = await createAgentSession({
+    db: fixture.db,
+    agentId: fixture.session.agentId,
+    userId: fixture.owner.id,
+  });
+  assert.ok(second);
+
+  const firstInput = await fixture.submit('shared-source');
+  const secondInput = await submitSessionMessage({
+    db: fixture.db,
+    sessionId: second.id,
+    userId: fixture.owner.id,
+    input: { sourceEventId: 'shared-source', text: 'A different conversation' },
+  });
+
+  assert.ok(firstInput.status === 'accepted' && secondInput.status === 'accepted');
+  expect(firstInput.run.sessionId).toBe(fixture.session.id);
+  expect(secondInput.run.sessionId).toBe(second.id);
+  expect(firstInput.run.id).not.toBe(secondInput.run.id);
+});
+
 it('snapshots model and reasoning selection at admission', async () => {
   await using fixture = await openSessionFixture();
   const first = await fixture.submit('first');

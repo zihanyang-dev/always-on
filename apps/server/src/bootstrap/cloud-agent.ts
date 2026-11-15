@@ -73,6 +73,7 @@ export async function executeCloudRun({
       checkpoint: null,
     };
 
+  // Pi stays on the trusted Runner; only file and process capabilities cross into E2B.
   await using resources = new AsyncDisposableStack();
   const cancellation = new AbortController();
   const signals = [cancellation.signal, AbortSignal.timeout(300_000)];
@@ -100,6 +101,7 @@ export async function executeCloudRun({
     checkpoint: claim.checkpoint,
   };
   const result = await executePi({ text: claim.text, session }, { signal, emit: context.emit });
+  // An unconfirmed external effect takes precedence over SDK success or cancellation.
   if (uncertainty)
     return {
       status: 'recovery_required',
@@ -134,6 +136,7 @@ export async function executeCloudRun({
   }
 
   function getWorkspace() {
+    // Cache failures too: acquisition retries within one Run must not silently bind another VM.
     pendingWorkspace ??= prepareWorkspace();
 
     return pendingWorkspace;
@@ -167,6 +170,7 @@ export async function executeCloudRun({
 
       return createRunWorkspace({ db, claim, signal, createId, stop, workspace: sandbox });
     } catch (error) {
+      // Replacing a missing binding would conceal the loss of the user's working files.
       if (error instanceof SandboxNotFoundError) missingSandbox = error;
       else
         uncertainty = new Error(`Run ${claim.run.id} could not confirm its sandbox binding`, {
@@ -214,6 +218,7 @@ function createWorkspaceContextTool({ db, claim }: { db: Database; claim: RunCla
   });
 
   async function readContext() {
+    // Product tools need current authority even though they do not enter the user sandbox.
     const access = await authorizeRunTool({ db, claim });
     if (access.status === 'cancel_requested') throw new Error(`Run ${claim.run.id} was cancelled`);
 

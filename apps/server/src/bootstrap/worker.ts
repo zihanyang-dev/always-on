@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { pino } from 'pino';
 import { openDatabase } from '../infrastructure/database/index.js';
-import { openSystemWorker } from '../system/index.js';
 import { openAgentWorker } from '../tasks/index.js';
 import { executeCloudRun } from './cloud-agent.js';
 import { parseWorkerEnv } from './env.js';
@@ -17,6 +16,10 @@ try {
 
 async function main() {
   const env = parseWorkerEnv(process.env);
+  const config = env.cloudAgent;
+  // Without an execution provider there is no queue consumer to start.
+  if (!config) return;
+
   const logger = pino({ level: env.LOG_LEVEL, base: { process: 'worker' } });
   const onError = (error: Error) => logger.error({ err: error }, 'Worker dependency failed');
 
@@ -25,35 +28,19 @@ async function main() {
   // Verify storage before starting a consumer that may immediately receive work.
   await database.check();
 
-  await using worker = openSystemWorker({
+  const execution = { db: database.db, config, createId: randomUUID, onError };
+  await using agentWorker = await openAgentWorker({
+    db: database.db,
     redisUrl: env.REDIS_URL,
     prefix: env.REDIS_PREFIX,
     concurrency: env.WORKER_CONCURRENCY,
-    checkDatabase: database.check,
-    now: () => new Date().toISOString(),
+    createId: randomUUID,
     onError,
+    execute: (claim, context) => executeCloudRun({ ...execution, claim, context }),
   });
-  await worker.ready();
-
-  const execution = env.cloudAgent
-    ? { db: database.db, config: env.cloudAgent, createId: randomUUID, onError }
-    : undefined;
-  await using agentWorker = execution
-    ? await openAgentWorker({
-        db: database.db,
-        redisUrl: env.REDIS_URL,
-        prefix: env.REDIS_PREFIX,
-        concurrency: env.WORKER_CONCURRENCY,
-        createId: randomUUID,
-        onError,
-        execute: (claim, context) => executeCloudRun({ ...execution, claim, context }),
-      })
-    : undefined;
   logger.info('Worker listening');
 
-  const failure = agentWorker
-    ? await Promise.race([shutdown.wait, agentWorker.failure])
-    : await shutdown.wait;
+  const failure = await Promise.race([shutdown.wait, agentWorker.failure]);
   if (failure) throw failure;
 
   logger.info('Worker stopping');

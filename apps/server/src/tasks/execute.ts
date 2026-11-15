@@ -37,6 +37,7 @@ export async function executeQueuedRun({
   const emit = createRunOutput({ db, claim, publish: publishEvent });
   let completion: RunCompletion;
 
+  // The executor releases SDK and sandbox resources before this scope stops lease renewal.
   {
     await using _owner = control;
 
@@ -58,6 +59,7 @@ export async function executeQueuedRun({
     completion = { status: 'recovery_required', error: `Run ${runId} lost its execution lease` };
   }
 
+  // A transport failure after commit cannot undo the authoritative terminal fact.
   const run = await completeRun({ db, claim, completion });
   await publishEvent({ type: 'run', run });
 
@@ -79,6 +81,7 @@ class RunControl implements AsyncDisposable {
   constructor({ db, claim, signal }: { db: Database; claim: RunClaim; signal: AbortSignal }) {
     this.#db = db;
     this.#claim = claim;
+    // Stop model work on cancellation while the separate lifetime keeps cleanup safely leased.
     this.signal = AbortSignal.any([signal, this.#execution.signal]);
     this.#polling = this.#observeOwnership();
   }

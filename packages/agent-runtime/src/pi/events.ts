@@ -32,7 +32,6 @@ function mapSessionEvent(event: AgentSessionEvent, index: number): ExecutionEven
         type: 'tool_started',
         id: event.toolCallId,
         name: event.toolName,
-        arguments: event.args,
       };
     case 'tool_execution_end':
       return {

@@ -40,6 +40,7 @@ export function streamSessionEvents(
   );
 
   async function reportFailure(error: Error, stream: SSEStreamingApi) {
+    // A closed browser connection is normal; dependency failures on a live stream need reporting.
     if (stream.aborted || requestSignal.aborted) return;
 
     subscription.connection.onError(error);
@@ -59,6 +60,7 @@ async function consumeSessionEvents({
 }: ActiveSubscription) {
   const cancellation = new AbortController();
   const signal = AbortSignal.any([cancellation.signal, requestSignal]);
+  // Subscription cancellation owns only its Redis reader, never the executing Run.
   stream.onAbort(() => cancellation.abort());
   await using reader = await openSessionEventReader({
     ...connection,
@@ -77,6 +79,7 @@ async function consumeSessionEvents({
     ...(reader.shouldReset ? { id: '0-0' } : {}),
   });
 
+  // Replay may overlap the snapshot; consumers merge by identity and confirmed message state.
   while (!signal.aborted) {
     const events = await reader.read();
     // Login revocation and resource membership both apply to already accepted subscriptions.

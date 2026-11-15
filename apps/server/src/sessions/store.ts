@@ -84,6 +84,7 @@ export async function updateSessionConfiguration({
   return db.transaction(update);
 
   async function update(transaction: DatabaseTransaction) {
+    // Serialize default changes with admission so each Run captures one complete configuration.
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
     if (!session) return null;
 
@@ -107,6 +108,7 @@ export async function readSessionSnapshot({
   return db.transaction(readSnapshot);
 
   async function readSnapshot(transaction: DatabaseTransaction) {
+    // The shared Session lock keeps revision, messages and Run state consistent during this read.
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
     if (!session) return null;
 
@@ -123,6 +125,7 @@ export async function readSessionRevision({
   return db.transaction(readRevision);
 
   async function readRevision(transaction: DatabaseTransaction) {
+    // Heartbeats repeat authorization; an earlier snapshot cannot grant permanent access.
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
 
     return session?.revision ?? null;
@@ -139,6 +142,7 @@ export async function submitSessionMessage({
   return db.transaction(submit);
 
   async function submit(transaction: DatabaseTransaction): Promise<MessageSubmission> {
+    // One Session lock serializes retries and configuration snapshots with competing submissions.
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
     if (!session) return { status: 'not_found' };
 
@@ -178,6 +182,7 @@ export async function cancelSessionRun({
     if (!run) return null;
     if (run.status !== 'queued' && run.status !== 'running') return parseRun(run);
 
+    // Queued work has no executor; active work must acknowledge cancellation before it can finish.
     const change =
       run.status === 'queued'
         ? { status: 'cancelled' as const, finishedAt: sql`clock_timestamp()` }
@@ -206,6 +211,7 @@ async function readSessionAccess({
   userId: string;
   action: 'read' | 'use';
 }) {
+  // Workspace membership never grants access to somebody else's private conversation.
   const [session] = await transaction
     .select()
     .from(AGENT_SESSIONS)
@@ -213,6 +219,7 @@ async function readSessionAccess({
     .for(action === 'read' ? 'share' : 'update');
   if (!session) return null;
 
+  // Hold membership through commit so removal cannot race an admitted change.
   const [membership] = await transaction
     .select({ roles: WORKSPACE_MEMBERS.role })
     .from(WORKSPACE_MEMBERS)
@@ -224,6 +231,8 @@ async function readSessionAccess({
     )
     .for('share');
   if (!membership || !hasAgentPermission({ roles: membership.roles, action })) return null;
+
+  // Reading history needs read access; starting work also needs the Agent's current authority.
   if (action === 'use') {
     const agent = await readUsableAgent({ transaction, agentId: session.agentId, userId });
     if (!agent) return null;
@@ -234,6 +243,7 @@ async function readSessionAccess({
 }
 
 async function readSessionView(transaction: DatabaseTransaction, session: AgentSession) {
+  // Prefer an active Run over newer queued inputs so a reload still shows the work in progress.
   const [runs, messages] = await Promise.all([
     transaction
       .select()
@@ -261,6 +271,7 @@ async function readSessionView(transaction: DatabaseTransaction, session: AgentS
 }
 
 async function hasUncertainRun(transaction: DatabaseTransaction, sessionId: string) {
+  // An unresolved effect blocks later input throughout this conversation, not just the latest Run.
   const [run] = await transaction
     .select({ id: AGENT_RUNS.id })
     .from(AGENT_RUNS)
@@ -339,6 +350,7 @@ async function recordSessionInput({
 }
 
 async function advanceRevision(transaction: DatabaseTransaction, sessionId: string) {
+  // Heartbeats reconcile committed changes even when the corresponding Redis publication is lost.
   await transaction
     .update(AGENT_SESSIONS)
     .set({ revision: sql`${AGENT_SESSIONS.revision} + 1` })
@@ -346,6 +358,7 @@ async function advanceRevision(transaction: DatabaseTransaction, sessionId: stri
 }
 
 function parseSession(row: SessionRow) {
+  // Validate stored settings before another Run can use them; private storage fields are stripped.
   const configuration = AGENT_CONFIGURATION_SCHEMA.parse(row.configuration);
 
   return AGENT_SESSION_SCHEMA.parse({

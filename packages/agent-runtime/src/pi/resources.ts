@@ -13,6 +13,7 @@ export function createSessionResources(systemPrompt: string): ResourceLoader {
     getSystemPromptSource: () => undefined,
     getAppendSystemPrompt: () => [],
     getAppendSystemPromptSources: () => [],
+    // Required SDK hooks stay inert: host-supplied resources never discover Runner-local files.
     extendResources: () => {},
     reload: async () => {},
   };

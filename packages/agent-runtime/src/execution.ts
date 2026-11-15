@@ -13,7 +13,7 @@ export type ExecutionEvent =
       state: 'completed' | 'interrupted';
       text: string;
     }
-  | { type: 'tool_started'; id: string; name: string; arguments: unknown }
+  | { type: 'tool_started'; id: string; name: string }
   | { type: 'tool_finished'; id: string; name: string; isError: boolean }
   | { type: 'settled' };
 

@@ -82,6 +82,7 @@ export async function openPiSession(options: PiSessionOptions): Promise<PiSessio
   };
 
   async function closeSession() {
+    // Join asynchronous SDK work before its synchronous disposal; provider resources close last.
     try {
       await session.abort();
     } finally {
