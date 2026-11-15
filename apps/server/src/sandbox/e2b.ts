@@ -67,6 +67,7 @@ export async function openE2bWorkspace({
   const directory = SANDBOX_WORKING_DIRECTORY;
   await sandbox.files.makeDir(directory, fileOptions);
   const resources = startup.move();
+
   return {
     sandboxId: sandbox.sandboxId,
     directory,
@@ -82,14 +83,17 @@ export async function openE2bWorkspace({
     const stream = await sandbox.files.read(path, { format: 'stream', ...fileOptions });
     const chunks: Uint8Array[] = [];
     let sizeBytes = 0;
+
     // Limit actual streamed bytes: guest files can grow after a metadata check.
     // Exiting async iteration cancels the SDK download and releases its connection.
     for await (const chunk of stream) {
       sizeBytes += chunk.byteLength;
       if (sizeBytes > MAX_FILE_READ_BYTES)
         throw new Error(`Sandbox file ${path} exceeds the 20 MiB read limit`);
+
       chunks.push(chunk);
     }
+
     return Buffer.concat(chunks, sizeBytes);
   }
 
@@ -107,6 +111,7 @@ export async function openE2bWorkspace({
 
   async function executeCommand(input: Parameters<ExecutionWorkspace['executeCommand']>[0]) {
     const signals = [signal, input.signal].filter((candidate) => candidate !== undefined);
+
     return executeSandboxCommand(sandbox, {
       ...input,
       ...(signals.length > 0 ? { signal: AbortSignal.any(signals) } : {}),
@@ -130,6 +135,7 @@ async function connectBoundSandbox({
     return await Sandbox.connect(sandboxId, options);
   } catch (error) {
     if (error instanceof NotFoundError) throw new SandboxNotFoundError(sandboxId, { cause: error });
+
     throw error;
   }
 }

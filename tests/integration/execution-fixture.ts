@@ -101,7 +101,7 @@ export async function openExecutionFixture(
     request,
     submit,
     snapshot,
-    openStream,
+    openStream: (cursor) => openSessionStream({ request, sessionId: session.id, cursor }),
     startWorker: fixture.startWorker,
     expectErrors: fixture.expectErrors,
     [Symbol.asyncDispose]: resources.disposeAsync.bind(resources),
@@ -131,46 +131,58 @@ export async function openExecutionFixture(
     expect(response.status).toBe(200);
     return SESSION_SNAPSHOT_SCHEMA.parse(await response.json());
   }
+}
 
-  async function openStream(cursor?: string) {
-    const cancellation = new AbortController();
-    const response = await request({
-      path: `/api/sessions/${session.id}/events`,
-      method: 'GET',
-      signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(10_000)]),
-      ...(cursor ? { headers: { 'last-event-id': cursor } } : {}),
-    });
-    expect(response.status).toBe(200);
-    assert.ok(response.body);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let pending = '';
-    return { next: nextEvent, [Symbol.asyncDispose]: dispose };
+async function openSessionStream({
+  request,
+  sessionId,
+  cursor,
+}: {
+  request: ExecutionFixture['request'];
+  sessionId: string;
+  cursor: string | undefined;
+}): Promise<SessionStreamFixture> {
+  const cancellation = new AbortController();
+  const response = await request({
+    path: `/api/sessions/${sessionId}/events`,
+    method: 'GET',
+    signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(10_000)]),
+    ...(cursor ? { headers: { 'last-event-id': cursor } } : {}),
+  });
+  expect(response.status).toBe(200);
+  assert.ok(response.body);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  return { next: nextEvent, [Symbol.asyncDispose]: dispose };
 
-    async function nextEvent(expected: string) {
-      while (true) {
-        const boundary = pending.indexOf('\n\n');
-        if (boundary >= 0) {
-          const frame = pending.slice(0, boundary);
-          pending = pending.slice(boundary + 2);
-          const lines = frame.split('\n');
-          const event = lines.find((line) => line.startsWith('event: '))?.slice(7);
-          if (event !== expected) continue;
-          const serialized = lines.find((line) => line.startsWith('data: '))?.slice(6);
-          if (!serialized) throw new Error(`SSE ${event} has no data`);
-          const value: unknown = JSON.parse(serialized);
-          return { value, id: lines.find((line) => line.startsWith('id: '))?.slice(4) };
-        }
+  async function nextEvent(expected: string) {
+    while (true) {
+      const boundary = pending.indexOf('\n\n');
+      if (boundary < 0) {
         const chunk = await reader.read();
         if (chunk.done) throw new Error(`SSE ended before ${expected}`);
         pending += decoder.decode(chunk.value, { stream: true });
+        continue;
       }
-    }
 
-    async function dispose() {
-      cancellation.abort();
-      await reader.cancel();
-      reader.releaseLock();
+      const frame = pending.slice(0, boundary);
+      pending = pending.slice(boundary + 2);
+      const lines = frame.split('\n');
+      const event = lines.find((line) => line.startsWith('event: '))?.slice(7);
+      if (event !== expected) continue;
+
+      const serialized = lines.find((line) => line.startsWith('data: '))?.slice(6);
+      if (!serialized) throw new Error(`SSE ${event} has no data`);
+
+      const value: unknown = JSON.parse(serialized);
+      return { value, id: lines.find((line) => line.startsWith('id: '))?.slice(4) };
     }
+  }
+
+  async function dispose() {
+    cancellation.abort();
+    await reader.cancel();
+    reader.releaseLock();
   }
 }

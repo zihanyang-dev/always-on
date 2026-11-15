@@ -37,6 +37,7 @@ export function createWorkspacePlugin({
   async function beforeDeleteOrganization({ organization }: { organization: { id: string } }) {
     // The SDK holds its organization lock; the FK also protects concurrent resource creation.
     if (!canDeleteWorkspace || (await canDeleteWorkspace(organization.id))) return;
+
     throw new APIError('CONFLICT', {
       code: 'WORKSPACE_HAS_AGENTS',
       message: `Workspace ${organization.id} still owns Agents and execution resources`,

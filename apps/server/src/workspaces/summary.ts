@@ -31,5 +31,6 @@ export async function readWorkspaceSummary({
       and(eq(WORKSPACE_TABLES.organization.id, workspaceId), eq(WORKSPACE_MEMBERS.userId, userId)),
     );
   if (!workspace || !hasAgentPermission({ roles: workspace.roles, action: 'use' })) return null;
+
   return { id: workspace.id, name: workspace.name };
 }

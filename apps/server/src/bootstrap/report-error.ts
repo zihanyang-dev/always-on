@@ -6,7 +6,9 @@ export function reportError(error: unknown): void {
   if (error instanceof SuppressedError) {
     reportError(error.error);
     reportError(error.suppressed);
+
     return;
   }
+
   console.error(inspect(error, { depth: null, colors: process.stderr.isTTY }));
 }

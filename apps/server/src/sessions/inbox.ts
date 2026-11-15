@@ -29,6 +29,7 @@ export async function appendInboxEvent({
       status: 'invalid',
       fields: result.error.issues.map((issue) => issue.path.join('.')),
     };
+
   // Only a repeated source identity is a duplicate; unrelated constraint failures must surface.
   const [inserted] = await db
     .insert(INBOX_EVENTS)
@@ -38,5 +39,6 @@ export async function appendInboxEvent({
     })
     .returning({ id: INBOX_EVENTS.id });
   if (!inserted) return { status: 'duplicate' };
+
   return { status: 'accepted', id: inserted.id };
 }

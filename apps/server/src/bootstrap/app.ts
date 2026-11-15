@@ -64,18 +64,23 @@ export function createApp({
     app.route('/api/agents', createAgentRoutes(dependencies));
     app.route('/api/sessions', createSessionRoutes(dependencies));
   }
+
   app.get('/api/health/live', (ctx) => ctx.json({ status: 'ok' }));
   app.get('/api/health/ready', async (ctx) => {
     const readiness = await checkReadiness(checks);
+
     return ctx.json(readiness, readiness.status === 'ready' ? 200 : 503);
   });
   app.get('/api/public-config', (ctx) => ctx.json(publicConfig));
   app.notFound((ctx) => ctx.json({ code: 'not_found', message: 'Endpoint not found' }, 404));
   app.onError((error, ctx) => {
     if (error instanceof HTTPException && error.status < 500) return error.getResponse();
+
     onError(error);
+
     return ctx.json({ code: 'internal_error', message: 'Request could not be completed' }, 500);
   });
+
   return app;
 }
 
@@ -83,5 +88,6 @@ function getClientIp(bindings: unknown) {
   // In-process requests have no socket; forwarding headers never establish a caller's identity.
   if (!bindings || typeof bindings !== 'object' || !('incoming' in bindings)) return undefined;
   if (!(bindings.incoming instanceof IncomingMessage)) return undefined;
+
   return bindings.incoming.socket.remoteAddress;
 }

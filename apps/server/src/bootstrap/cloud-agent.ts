@@ -30,6 +30,7 @@ export async function loadAgentModelCatalog(
   const groups = await Promise.all(
     config.connections.map((connection) => {
       const identity = createHash('sha256').update(connection.provider).digest('hex');
+
       return listPiModels({ directory: join(config.directory, 'providers', identity), connection });
     }),
   );
@@ -42,6 +43,7 @@ export async function loadAgentModelCatalog(
     throw new Error(
       `Default model ${config.defaultModel.provider}/${config.defaultModel.id} is unavailable`,
     );
+
   return MODEL_CATALOG_SCHEMA.parse({ models, defaultModel: config.defaultModel });
 }
 
@@ -70,37 +72,34 @@ export async function executeCloudRun({
       error: `Run ${claim.run.id} selected an unavailable model provider`,
       checkpoint: null,
     };
+
   await using resources = new AsyncDisposableStack();
   const cancellation = new AbortController();
   const signals = [cancellation.signal, AbortSignal.timeout(300_000)];
   if (context.signal) signals.push(context.signal);
+
   const signal = AbortSignal.any(signals);
   let pendingWorkspace: Promise<ExecutionWorkspace> | undefined;
   let uncertainty: Error | undefined;
   let missingSandbox: SandboxNotFoundError | undefined;
   const workspace = createDeferredWorkspace(getWorkspace);
-  const result = await executePi(
-    {
-      text: claim.text,
-      session: {
-        directory: join(
-          config.directory,
-          'sessions',
-          claim.run.sessionId,
-          claim.run.id,
-          claim.ownerToken,
-        ),
-        connection,
-        modelId: claim.configuration.model.id,
-        reasoningEffort: claim.configuration.reasoningEffort,
-        systemPrompt: claim.configuration.instructions,
-        tools: [createWorkspaceContextTool({ db, claim })],
-        workspace,
-        checkpoint: claim.checkpoint,
-      },
-    },
-    { signal, emit: context.emit },
-  );
+  const session = {
+    directory: join(
+      config.directory,
+      'sessions',
+      claim.run.sessionId,
+      claim.run.id,
+      claim.ownerToken,
+    ),
+    connection,
+    modelId: claim.configuration.model.id,
+    reasoningEffort: claim.configuration.reasoningEffort,
+    systemPrompt: claim.configuration.instructions,
+    tools: [createWorkspaceContextTool({ db, claim })],
+    workspace,
+    checkpoint: claim.checkpoint,
+  };
+  const result = await executePi({ text: claim.text, session }, { signal, emit: context.emit });
   if (uncertainty)
     return {
       status: 'recovery_required',
@@ -112,6 +111,7 @@ export async function executeCloudRun({
       error: missingSandbox.message,
       checkpoint: 'checkpoint' in result ? result.checkpoint : null,
     };
+
   switch (result.status) {
     case 'completed':
     case 'cancelled':
@@ -135,6 +135,7 @@ export async function executeCloudRun({
 
   function getWorkspace() {
     pendingWorkspace ??= prepareWorkspace();
+
     return pendingWorkspace;
   }
 
@@ -144,23 +145,26 @@ export async function executeCloudRun({
       cancellation.abort();
       signal.throwIfAborted();
     }
+
     try {
+      const metadata = {
+        application: 'always-on',
+        workspaceId: claim.workspaceId,
+        sessionId: claim.run.sessionId,
+      };
       const binding = claim.sandboxId
         ? { kind: 'existing' as const, sandboxId: claim.sandboxId }
         : {
             kind: 'new' as const,
             idempotencyKey: claim.run.sessionId,
-            metadata: {
-              application: 'always-on',
-              workspaceId: claim.workspaceId,
-              sessionId: claim.run.sessionId,
-            },
+            metadata,
           };
       const sandbox = resources.use(
         await openE2bWorkspace({ connection: config.sandbox, binding, signal }),
       );
       // Bind before starting an effect receipt: acquisition is distinct from command dispatch.
       await bindRunSandbox({ db, claim, sandboxId: sandbox.sandboxId });
+
       return createRunWorkspace({ db, claim, signal, createId, stop, workspace: sandbox });
     } catch (error) {
       if (error instanceof SandboxNotFoundError) missingSandbox = error;
@@ -176,9 +180,11 @@ export async function executeCloudRun({
   function stop(interruption: RunInterruption) {
     if (interruption.kind === 'cancel_requested') {
       cancellation.abort();
+
       return;
     }
     if (interruption.kind === 'uncertain_effect') uncertainty ??= interruption.error;
+
     onError(interruption.error);
     cancellation.abort(interruption.error);
   }
@@ -210,6 +216,7 @@ function createWorkspaceContextTool({ db, claim }: { db: Database; claim: RunCla
   async function readContext() {
     const access = await authorizeRunTool({ db, claim });
     if (access.status === 'cancel_requested') throw new Error(`Run ${claim.run.id} was cancelled`);
+
     const workspace = await readWorkspaceSummary({
       db,
       workspaceId: claim.workspaceId,
@@ -217,6 +224,7 @@ function createWorkspaceContextTool({ db, claim }: { db: Database; claim: RunCla
     });
     if (!workspace)
       throw new Error(`Run ${claim.run.id} cannot read workspace ${claim.workspaceId}`);
+
     return {
       content: [{ type: 'text' as const, text: JSON.stringify(workspace) }],
       details: undefined,

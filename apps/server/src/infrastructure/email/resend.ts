@@ -38,6 +38,7 @@ export function createResendSender({
     });
     // Provider bodies may contain credentials or reset URLs; errors carry only the HTTP status.
     if (!response.ok) throw new Error(`Resend delivery failed with HTTP ${response.status}`);
+
     DELIVERY_RECEIPT_SCHEMA.parse(await response.json());
   }
 }
@@ -45,6 +46,8 @@ export function createResendSender({
 function isSenderAddress(value: string) {
   // Reject line breaks before parsing either supported sender format.
   if (/[\r\n]/.test(value)) return false;
+
   const address = value.match(/^[^<>]+<([^<>]+)>$/)?.[1] ?? value;
+
   return EMAIL_ADDRESS_SCHEMA.safeParse(address).success;
 }

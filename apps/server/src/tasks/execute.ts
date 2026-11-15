@@ -28,14 +28,18 @@ export async function executeQueuedRun({
   onError: (error: Error) => void;
 }): Promise<void> {
   if (signal.aborted) return;
+
   const claim = await claimRun({ db, runId, ownerToken });
   if (!claim) return;
+
   const { sessionId } = claim.run;
   const control = new RunControl({ db, claim, signal });
   const emit = createRunOutput({ db, claim, publish: publishEvent });
   let completion: RunCompletion;
+
   {
     await using _owner = control;
+
     try {
       await publishEvent({ type: 'run', run: claim.run });
       completion = await execute(claim, { signal: control.signal, emit });
@@ -47,11 +51,13 @@ export async function executeQueuedRun({
       };
     }
   }
+
   const failure = control.getFailure();
   if (failure) {
     onError(failure);
     completion = { status: 'recovery_required', error: `Run ${runId} lost its execution lease` };
   }
+
   const run = await completeRun({ db, claim, completion });
   await publishEvent({ type: 'run', run });
 
@@ -93,6 +99,7 @@ class RunControl implements AsyncDisposable {
         if (status === 'lost')
           throw new Error(`Run ${this.#claim.run.id} execution lease was lost`);
         if (status === 'cancel_requested') this.#execution.abort();
+
         await waitInterval(1_000, undefined, { signal: this.#lifetime.signal });
       }
     } catch (error) {
@@ -102,6 +109,7 @@ class RunControl implements AsyncDisposable {
         error.cause === this.#lifetime.signal.reason
       )
         return;
+
       this.#failure = new Error(`Run ${this.#claim.run.id} ownership check failed`, {
         cause: error,
       });

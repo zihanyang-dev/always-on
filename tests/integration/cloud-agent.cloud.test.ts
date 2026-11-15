@@ -16,6 +16,7 @@ import {
   AGENT_SESSIONS,
   AGENT_TOOL_CALLS,
 } from '../../apps/server/src/infrastructure/database/index.js';
+import type { RunExecutor } from '../../apps/server/src/tasks/index.js';
 import { openExecutionFixture } from './execution-fixture.js';
 
 it('executes and resumes the real HTTP, queue, Pi, DeepSeek and E2B chain', async () => {
@@ -32,10 +33,7 @@ it('executes and resumes the real HTTP, queue, Pi, DeepSeek and E2B chain', asyn
   const fixture = resources.use(await openExecutionFixture(catalog));
   resources.defer(removeSandbox);
   const failures: Error[] = [];
-  const execute = (
-    claim: Parameters<typeof executeCloudRun>[0]['claim'],
-    context: Parameters<typeof executeCloudRun>[0]['context'],
-  ) =>
+  const execute: RunExecutor = (claim, context) =>
     executeCloudRun({
       db: fixture.db,
       config,

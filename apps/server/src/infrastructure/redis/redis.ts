@@ -29,6 +29,7 @@ export function openRedis({
     retryStrategy: (attempt) => (isStopping ? null : Math.min(attempt * 200, 2_000)),
   });
   client.on('error', onError);
+
   return { client, disconnect, [Symbol.asyncDispose]: dispose };
 
   function disconnect() {
@@ -37,8 +38,10 @@ export function openRedis({
     // Let the pending reconnect finish: failure stops retries; success closes before sending work.
     if (client.status === 'reconnecting') {
       client.once('connect', closeTransport);
+
       return;
     }
+
     closeTransport();
   }
 
@@ -48,11 +51,13 @@ export function openRedis({
 
   async function dispose() {
     if (client.status === 'end') return;
+
     const { promise: ended, resolve } = Promise.withResolvers<void>();
     client.once('end', resolve);
     // QUIT can queue behind offline work. Disconnect bounds that wait and rejects pending commands.
     const deadline = setTimeout(disconnect, REDIS_DRAIN_TIMEOUT_MS);
     deadline.unref();
+
     try {
       await client.quit();
     } finally {

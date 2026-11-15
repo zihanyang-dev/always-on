@@ -7,6 +7,7 @@ export function LanguageSwitcher() {
   const { t, i18n } = useTranslation('common');
   const [failure, setFailure] = useState<Error | undefined>();
   const language = i18n.resolvedLanguage ?? 'en';
+
   return (
     <div className="language-control">
       <select aria-label={t('language.label')} value={language} onChange={handleChange}>
@@ -27,6 +28,7 @@ export function LanguageSwitcher() {
   function handleChange(event: ChangeEvent<HTMLSelectElement>) {
     const selected = event.currentTarget.value;
     if (!isSupportedLanguage(selected)) return;
+
     setFailure(undefined);
     void i18n.changeLanguage(selected).catch(handleFailure);
   }

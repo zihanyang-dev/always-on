@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createAgent, listAgents } from '../../apps/server/src/agents/index.js';
 import {
   AGENT_RUNS,
   AGENT_SESSIONS,
+  AGENT_TOOL_CALLS,
+  AGENTS,
   WORKSPACE_MEMBERS,
 } from '../../apps/server/src/infrastructure/database/index.js';
 import {
@@ -246,6 +248,53 @@ it('observes permission revocation before another side effect starts', async () 
   expect(
     await startRunTool({ db: fixture.db, claim, tool: { id: randomUUID(), name: 'bash' } }),
   ).toEqual({ status: 'cancel_requested' });
+});
+
+it('rechecks the execution lease after waiting for an Agent permission lock', async () => {
+  await using fixture = await openSessionFixture();
+  const claim = await fixture.claim('permission-lock');
+  const locked = Promise.withResolvers<number>();
+  const release = Promise.withResolvers<void>();
+  const toolId = randomUUID();
+  const locking = fixture.db.transaction(async (transaction) => {
+    const [connection] = await transaction
+      .select({ pid: sql<number>`pg_backend_pid()` })
+      .from(AGENTS)
+      .where(eq(AGENTS.id, fixture.session.agentId))
+      .for('update');
+    assert.ok(connection);
+    locked.resolve(connection.pid);
+    await release.promise;
+    await transaction
+      .update(AGENT_RUNS)
+      .set({ leaseUntil: sql`clock_timestamp() - interval '1 second'` })
+      .where(eq(AGENT_RUNS.id, claim.run.id));
+  });
+  const blockerId = await locked.promise;
+  const starting = startRunTool({ db: fixture.db, claim, tool: { id: toolId, name: 'bash' } });
+
+  const [waiting] = await Promise.allSettled([vi.waitFor(assertBlocked)]);
+  // Release the lock and join both requests before any assertion can leave fixture-owned work behind.
+  release.resolve();
+  const [blocker, started] = await Promise.allSettled([locking, starting]);
+  expect(waiting.status).toBe('fulfilled');
+  expect(blocker.status).toBe('fulfilled');
+  assert.ok(started.status === 'rejected');
+  expect(started.reason).toMatchObject({
+    message: expect.stringContaining('lease is no longer owned'),
+  });
+  const receipts = await fixture.db
+    .select()
+    .from(AGENT_TOOL_CALLS)
+    .where(eq(AGENT_TOOL_CALLS.id, toolId));
+  expect(receipts).toEqual([]);
+
+  async function assertBlocked() {
+    const blocked = await fixture.db.execute(sql`
+      select pid from pg_stat_activity where ${blockerId} = any(pg_blocking_pids(pid))
+    `);
+    expect(blocked.rows).toHaveLength(1);
+  }
 });
 
 it('persists queued cancellation without invoking a Runner', async () => {

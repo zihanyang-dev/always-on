@@ -13,6 +13,13 @@ export type AuthenticatedApiEnv = { Variables: { userId: string } };
 /** Feature routes whose request context already contains an authenticated identity. */
 export type AuthenticatedRouter = Hono<AuthenticatedApiEnv>;
 
+/** Validated feature input paired with the identity established by authentication. */
+export type AuthenticatedContext<TInput extends object = object> = Context<
+  AuthenticatedApiEnv,
+  string,
+  { out: TInput }
+>;
+
 /** Builds a feature router whose handlers receive an authenticated user identity. */
 export function createAuthenticatedRouter(getUser: GetRequestUser): AuthenticatedRouter {
   const routes = new Hono<AuthenticatedApiEnv>();
@@ -22,9 +29,11 @@ export function createAuthenticatedRouter(getUser: GetRequestUser): Authenticate
     ctx.header('Cache-Control', 'no-store');
     const user = await getUser(ctx.req.raw.headers);
     if (!user) return ctx.json({ code: 'unauthenticated', message: 'Sign in to continue' }, 401);
+
     ctx.set('userId', user.id);
     await next();
   });
+
   return routes;
 }
 
@@ -34,6 +43,7 @@ export function handleValidationResult(
   ctx: Pick<Context, 'json'>,
 ): Response | undefined {
   if (result.success) return;
+
   return ctx.json(
     { code: 'invalid_input', fields: result.error.issues.map((issue) => issue.path.join('.')) },
     400,

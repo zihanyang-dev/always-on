@@ -13,7 +13,9 @@ export function createUserRoutes({
     ctx.header('Cache-Control', 'no-store');
     const user = await getUser(ctx.req.raw.headers);
     if (!user) return ctx.json({ code: 'unauthenticated', message: 'Sign in to continue' }, 401);
+
     return ctx.json(user);
   });
+
   return routes;
 }

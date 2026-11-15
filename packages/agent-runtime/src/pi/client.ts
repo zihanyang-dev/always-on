@@ -30,6 +30,7 @@ export async function openPiClient({
   await runtime.setRuntimeApiKey(connection.provider, connection.apiKey);
   if (connection.baseUrl)
     runtime.registerProvider(connection.provider, { baseUrl: connection.baseUrl });
+
   return {
     runtime,
     [Symbol.asyncDispose]: runtime.settleCredentialWrites.bind(runtime),

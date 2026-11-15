@@ -17,5 +17,6 @@ export async function checkReadiness(checks: ReadinessChecks): Promise<Readiness
     };
   if (redis.status === 'rejected')
     return { status: 'unavailable', checks: { database: 'up', redis: 'down' } };
+
   return { status: 'ready', checks: { database: 'up', redis: 'up' } };
 }

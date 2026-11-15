@@ -20,10 +20,12 @@ export async function runStatusCommand({
   // A 503 carries a useful readiness snapshot rather than an opaque transport error.
   if (response.status !== 200 && response.status !== 503)
     throw new Error(`Readiness endpoint ${url.origin} returned HTTP ${response.status}`);
+
   const readiness = READINESS_SCHEMA.parse(await response.json());
   const output =
     format === 'json'
       ? JSON.stringify(readiness, null, 2)
       : `Platform ${readiness.status} · database ${readiness.checks.database} · Redis ${readiness.checks.redis}`;
+
   return { output, exitCode: readiness.status === 'ready' ? 0 : 1 };
 }

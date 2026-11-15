@@ -39,11 +39,13 @@ export function openDatabase({
   });
   pool.on('error', onError);
   const db = drizzle(pool, { schema: DATABASE_SCHEMA });
+
   return { db, check, [Symbol.asyncDispose]: dispose };
 
   async function check() {
     await pool.query('select 1');
   }
+
   async function dispose() {
     await pool.end();
   }

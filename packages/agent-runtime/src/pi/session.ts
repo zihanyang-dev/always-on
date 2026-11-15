@@ -42,6 +42,7 @@ export async function openPiSession(options: PiSessionOptions): Promise<PiSessio
   const client = startup.use(await openPiClient({ directory, connection }));
   const model = client.runtime.getModel(connection.provider, options.modelId);
   if (!model) throw new Error(`Pi model ${connection.provider}/${options.modelId} is unavailable`);
+
   const thinkingLevel = getSupportedThinkingLevels(model).find(
     (level) => level === options.reasoningEffort,
   );
@@ -50,6 +51,7 @@ export async function openPiSession(options: PiSessionOptions): Promise<PiSessio
     throw new Error(
       `Model ${connection.provider}/${options.modelId} does not support reasoning effort ${options.reasoningEffort}`,
     );
+
   const workingDirectory = options.workspace?.directory ?? directory;
   const history = await openSessionHistory({ directory, workingDirectory, sessionFile });
   const workspaceTools = options.workspace ? createWorkspaceTools(options.workspace) : [];
@@ -70,7 +72,9 @@ export async function openPiSession(options: PiSessionOptions): Promise<PiSessio
   startup.defer(closeSession);
   const historyFile = history.getSessionFile();
   if (!historyFile) throw new Error(`Pi session ${history.getSessionId()} has no persistent file`);
+
   const resources = startup.move();
+
   return {
     sdk: session,
     sessionFile: historyFile,
@@ -97,6 +101,7 @@ async function openSessionHistory({
 }) {
   const historyDirectory = join(directory, 'sessions');
   if (!sessionFile) return SessionManager.create(workingDirectory, historyDirectory);
+
   // A Run receives its own transcript copy; an old owner must never mutate a committed checkpoint.
   // Copy opaque SDK bytes instead of reconstructing context from product display messages.
   await mkdir(historyDirectory, { recursive: true, mode: 0o700 });
@@ -105,5 +110,6 @@ async function openSessionHistory({
   const history = SessionManager.open(restoredFile, historyDirectory, workingDirectory);
   if (history.getEntries().length === 0)
     throw new Error(`Pi session file ${sessionFile} contains no recoverable history`);
+
   return history;
 }

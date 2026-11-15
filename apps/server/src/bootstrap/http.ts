@@ -28,12 +28,14 @@ export async function openHttpServer({
   const address = server.address();
   if (!address || typeof address === 'string')
     throw new Error('HTTP server did not bind a TCP address');
+
   return { port: address.port, [Symbol.asyncDispose]: dispose };
 
   async function dispose() {
     // Drain active requests first; the deadline bounds clients that never finish a response.
     const deadline = setTimeout(server.closeAllConnections.bind(server), HTTP_DRAIN_TIMEOUT_MS);
     deadline.unref();
+
     try {
       await closeServer();
     } finally {

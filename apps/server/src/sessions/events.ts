@@ -36,6 +36,7 @@ export async function publishSessionEvent({
     .exec();
   if (!replies)
     throw new Error(`Session ${sessionId} stream publication returned no acknowledgement`);
+
   for (const [error] of replies) {
     if (error) throw new Error(`Session ${sessionId} stream publication failed`, { cause: error });
   }
@@ -83,6 +84,7 @@ export async function openSessionEventReader({
       compareCursors(cursor, lastId) > 0);
   let position = shouldReset ? '0-0' : cursor;
   const resources = startup.move();
+
   return { shouldReset, read, [Symbol.asyncDispose]: resources.disposeAsync.bind(resources) };
 
   async function read() {
@@ -101,6 +103,7 @@ export async function openSessionEventReader({
     const events = entries.map(parseEntry);
     const lastEvent = events.at(-1);
     if (lastEvent) position = lastEvent.id;
+
     return events;
   }
 
@@ -109,11 +112,13 @@ export async function openSessionEventReader({
     const [name, serialized] = fields;
     if (name !== 'event' || serialized === undefined || fields.length !== 2)
       throw new Error(`Session ${sessionId} has a malformed stream entry ${id}`);
+
     const input: unknown = JSON.parse(serialized);
     const event = SESSION_EVENT_SCHEMA.parse(input);
     const eventSessionId = event.type === 'message' ? event.message.sessionId : undefined;
     if (eventSessionId && eventSessionId !== sessionId)
       throw new Error(`Session ${sessionId} stream contains a message from another session`);
+
     return { id, event };
   }
 }
@@ -133,5 +138,6 @@ function compareCursors(first: string, second: string) {
     .join('-');
   if (left === right) return 0;
   if (left < right) return -1;
+
   return 1;
 }

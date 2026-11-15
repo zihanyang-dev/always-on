@@ -8,6 +8,7 @@ export function observeShutdown(): Shutdown {
   const { promise: wait, resolve } = Promise.withResolvers<void>();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+
   return { wait, [Symbol.dispose]: dispose };
 
   function stop() {

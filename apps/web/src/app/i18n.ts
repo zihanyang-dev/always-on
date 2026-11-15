@@ -40,6 +40,7 @@ export async function initializeI18n(): Promise<i18n> {
       },
       react: { useSuspense: false },
     });
+
   return instance;
 }
 

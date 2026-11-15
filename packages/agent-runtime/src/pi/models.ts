@@ -12,6 +12,7 @@ export async function listPiModels({
 }): Promise<readonly ModelOption[]> {
   await using client = await openPiClient({ directory, connection });
   const models = await client.runtime.getAvailable(connection.provider);
+
   return models.map((model) => ({
     provider: model.provider,
     id: model.id,

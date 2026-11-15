@@ -69,6 +69,7 @@ export function openSystemWorker({
   worker.on('failed', (job, error) =>
     onError(new Error(`System check job ${job?.id ?? 'unknown'} failed`, { cause: error })),
   );
+
   return {
     ready,
     [Symbol.asyncDispose]: dispose,
@@ -80,6 +81,7 @@ export function openSystemWorker({
 
   async function processCheck(job: { name: string; data: unknown }) {
     if (job.name !== 'check') throw new Error(`Unsupported system job ${job.name}`);
+
     const input = CHECK_INPUT_SCHEMA.parse(job.data);
     await checkDatabase();
     const result = SYSTEM_CHECK_RESULT_SCHEMA.parse({
@@ -87,6 +89,7 @@ export function openSystemWorker({
       completedAt: now(),
     });
     await publishSystemCheck({ redis: connection.client, prefix, result });
+
     return result;
   }
 
@@ -103,6 +106,7 @@ export function openSystemWorker({
       });
     if (closed.status === 'fulfilled') return;
     if (closed.reason instanceof Error) throw closed.reason;
+
     throw new Error(`Cannot stop system worker ${prefix}`, { cause: closed.reason });
   }
 }
@@ -124,6 +128,7 @@ async function publishSystemCheck({
     .expire(streamKey, EVENT_RETENTION_SECONDS)
     .exec();
   if (!replies) throw new Error(`System check ${result.checkId} returned no publication result`);
+
   for (const [error] of replies) {
     if (error) throw new Error(`Cannot publish system check ${result.checkId}`, { cause: error });
   }

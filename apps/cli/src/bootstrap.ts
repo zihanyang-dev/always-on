@@ -33,6 +33,7 @@ async function executeCommand(command: CliCommand): Promise<CliResult> {
         homeDirectory: homedir(),
         platform: process.platform,
       });
+
       return await runStatusCommand({ serverUrl: config.serverUrl, format: command.format });
     }
     default: {

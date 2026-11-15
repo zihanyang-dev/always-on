@@ -1,7 +1,7 @@
 import type { ExecutionWorkspace } from '@always-on/agent-runtime/workspace';
 import type { Database } from '../infrastructure/database/index.js';
-import type { RunClaim } from './ownership.js';
-import { authorizeRunTool, finishRunTool, type RunToolAccess, startRunTool } from './store.js';
+import type { RunClaim, RunToolAccess } from './ownership.js';
+import { authorizeRunTool, finishRunTool, startRunTool } from './store.js';
 
 /** Distinguishes rejected access from an external action whose result cannot be trusted. */
 export type RunInterruption =
@@ -36,6 +36,7 @@ export function createRunWorkspace({
 
   async function readFile(path: string) {
     await authorize();
+
     return workspace.readFile(path);
   }
 
@@ -46,6 +47,7 @@ export function createRunWorkspace({
 
   async function executeCommand(input: Parameters<ExecutionWorkspace['executeCommand']>[0]) {
     const commandSignal = input.signal ? AbortSignal.any([signal, input.signal]) : signal;
+
     return recordEffect(
       'bash',
       () => workspace.executeCommand({ ...input, signal: commandSignal }),
@@ -66,9 +68,11 @@ export function createRunWorkspace({
     commandSignal?.throwIfAborted();
     const toolId = createId();
     await checkToolAuthority(() => startRunTool({ db, claim, tool: { id: toolId, name } }));
+
     try {
       const result = await operation();
       await finishRunTool({ db, claim, toolId });
+
       return result;
     } catch (error) {
       // The command adapter throws the exact abort reason only after remote termination is confirmed.
@@ -76,6 +80,7 @@ export function createRunWorkspace({
         await finishRunTool({ db, claim, toolId });
         throw error;
       }
+
       // An unacknowledged effect stays pending and prevents automatic replay of this Session.
       stop({
         kind: 'uncertain_effect',
@@ -90,6 +95,7 @@ export function createRunWorkspace({
   async function checkToolAuthority(check: () => Promise<RunToolAccess>) {
     signal.throwIfAborted();
     let access: RunToolAccess;
+
     try {
       access = await check();
     } catch (error) {
@@ -100,6 +106,7 @@ export function createRunWorkspace({
       throw error;
     }
     if (access.status === 'allowed') return;
+
     stop({ kind: 'cancel_requested' });
     throw new Error(`Run ${claim.run.id} tool execution was cancelled`);
   }

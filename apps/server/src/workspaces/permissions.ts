@@ -33,6 +33,7 @@ export function hasAgentPermission({
 }): boolean {
   return roles.split(',').some((role) => {
     if (!isWorkspaceRole(role)) return false;
+
     return WORKSPACE_ROLES[role].authorize({ agent: [action] }).success;
   });
 }

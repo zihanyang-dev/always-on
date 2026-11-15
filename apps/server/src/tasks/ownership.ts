@@ -21,7 +21,6 @@ import {
 } from '../infrastructure/database/index.js';
 
 const RUN_LEASE_DURATION_MS = 20_000;
-type SessionRow = typeof AGENT_SESSIONS.$inferSelect;
 
 /** A fenced claim, without a live SDK, model credential or database transaction. */
 export type RunClaim = {
@@ -35,6 +34,9 @@ export type RunClaim = {
   readonly sandboxId: string | null;
 };
 
+/** Current tool authority; a durable stop request is an expected access outcome. */
+export type RunToolAccess = { readonly status: 'allowed' | 'cancel_requested' };
+
 /** Claims the first queued input for a session, with current authorization and one database writer. */
 export async function claimRun({
   db,
@@ -45,14 +47,18 @@ export async function claimRun({
   runId: string;
   ownerToken: string;
 }): Promise<RunClaim | null> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(claim);
+
+  async function claim(transaction: DatabaseTransaction): Promise<RunClaim | null> {
     const [candidate] = await transaction
       .select({ sessionId: AGENT_RUNS.sessionId })
       .from(AGENT_RUNS)
       .where(eq(AGENT_RUNS.id, runId));
     if (!candidate) return null;
+
     const session = await lockSession(transaction, candidate.sessionId);
     if (!session) return null;
+
     const [blocked] = await transaction
       .select({ id: AGENT_RUNS.id })
       .from(AGENT_RUNS)
@@ -64,6 +70,7 @@ export async function claimRun({
       )
       .limit(1);
     if (blocked) return null;
+
     const [next] = await transaction
       .select()
       .from(AGENT_RUNS)
@@ -71,6 +78,7 @@ export async function claimRun({
       .orderBy(asc(AGENT_RUNS.createdAt), asc(AGENT_RUNS.id))
       .limit(1);
     if (!next || next.id !== runId) return null;
+
     const agent = await readUsableAgent({
       transaction,
       agentId: session.agentId,
@@ -82,8 +90,10 @@ export async function claimRun({
         .set({ status: 'cancelled', finishedAt: sql`clock_timestamp()` })
         .where(eq(AGENT_RUNS.id, runId));
       await advanceRevision(transaction, session.id);
+
       return null;
     }
+
     const [claimed] = await transaction
       .update(AGENT_RUNS)
       .set({
@@ -95,9 +105,12 @@ export async function claimRun({
       .where(eq(AGENT_RUNS.id, runId))
       .returning();
     if (!claimed) throw new Error(`Run ${runId} disappeared during claim`);
+
     const run = parseRun(claimed);
     if (run.status !== 'running') throw new Error(`Run ${runId} was not activated during claim`);
+
     await advanceRevision(transaction, session.id);
+
     return {
       run,
       ownerToken,
@@ -108,7 +121,7 @@ export async function claimRun({
       checkpoint: EXECUTION_CHECKPOINT_SCHEMA.nullable().parse(session.checkpoint),
       sandboxId: session.sandboxId,
     };
-  });
+  }
 }
 
 /** Renews ownership and observes durable cancellation or permission changes. */
@@ -119,11 +132,17 @@ export async function renewRun({
   db: Database;
   claim: RunClaim;
 }): Promise<'active' | 'cancel_requested' | 'lost'> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(renew);
+
+  async function renew(
+    transaction: DatabaseTransaction,
+  ): Promise<'active' | 'cancel_requested' | 'lost'> {
     const session = await lockSession(transaction, claim.run.sessionId);
     if (!session) return 'lost';
+
     const [run] = await transaction.select().from(AGENT_RUNS).where(getOwnedRunFilter(claim));
     if (!run) return 'lost';
+
     const agent = await readUsableAgent({
       transaction,
       agentId: session.agentId,
@@ -136,8 +155,9 @@ export async function renewRun({
       .where(getOwnedRunFilter(claim))
       .returning({ id: AGENT_RUNS.id });
     if (!renewed) return 'lost';
+
     return shouldCancel ? 'cancel_requested' : 'active';
-  });
+  }
 }
 
 /** Finds durable dispatch intents independently of the state of Redis or a previous dispatcher. */
@@ -164,6 +184,7 @@ export async function listQueuedRuns(db: Database): Promise<readonly string[]> {
     )
     .orderBy(AGENT_RUNS.sessionId, AGENT_RUNS.createdAt, AGENT_RUNS.id)
     .limit(100);
+
   return rows.map((row) => row.id);
 }
 
@@ -179,33 +200,39 @@ export async function recoverExpiredRuns(db: Database): Promise<void> {
       ),
     )
     .limit(10);
-  await Promise.all(candidates.map(recoverRun));
+  await Promise.all(candidates.map((candidate) => recoverExpiredRun(db, candidate)));
+}
 
-  async function recoverRun(candidate: { id: string; sessionId: string }) {
-    await db.transaction(async (transaction) => {
-      await lockSession(transaction, candidate.sessionId);
-      const recovered = await transaction
-        .update(AGENT_RUNS)
-        .set({
-          status: 'recovery_required',
-          finishedAt: sql`clock_timestamp()`,
-          error: `Run ${candidate.id} lost its execution owner; inspect native history and tool receipts before continuing`,
-        })
-        .where(
-          and(
-            eq(AGENT_RUNS.id, candidate.id),
-            inArray(AGENT_RUNS.status, ['running', 'cancelling']),
-            lt(AGENT_RUNS.leaseUntil, sql`clock_timestamp()`),
-          ),
-        )
-        .returning({ id: AGENT_RUNS.id });
-      if (recovered.length === 0) return;
-      await transaction
-        .update(AGENT_MESSAGES)
-        .set({ state: 'interrupted' })
-        .where(and(eq(AGENT_MESSAGES.runId, candidate.id), eq(AGENT_MESSAGES.state, 'pending')));
-      await advanceRevision(transaction, candidate.sessionId);
-    });
+async function recoverExpiredRun(
+  db: Database,
+  { id, sessionId }: { id: string; sessionId: string },
+) {
+  return db.transaction(recover);
+
+  async function recover(transaction: DatabaseTransaction) {
+    await lockSession(transaction, sessionId);
+    const recovered = await transaction
+      .update(AGENT_RUNS)
+      .set({
+        status: 'recovery_required',
+        finishedAt: sql`clock_timestamp()`,
+        error: `Run ${id} lost its execution owner; inspect native history and tool receipts before continuing`,
+      })
+      .where(
+        and(
+          eq(AGENT_RUNS.id, id),
+          inArray(AGENT_RUNS.status, ['running', 'cancelling']),
+          lt(AGENT_RUNS.leaseUntil, sql`clock_timestamp()`),
+        ),
+      )
+      .returning({ id: AGENT_RUNS.id });
+    if (recovered.length === 0) return;
+
+    await transaction
+      .update(AGENT_MESSAGES)
+      .set({ state: 'interrupted' })
+      .where(and(eq(AGENT_MESSAGES.runId, id), eq(AGENT_MESSAGES.state, 'pending')));
+    await advanceRevision(transaction, sessionId);
   }
 }
 
@@ -215,23 +242,51 @@ async function lockSession(transaction: DatabaseTransaction, sessionId: string) 
     .from(AGENT_SESSIONS)
     .where(eq(AGENT_SESSIONS.id, sessionId))
     .for('update');
+
   return session;
 }
 
+/** Locks the Session and checks the live claim before recording an already-observed fact. */
 export async function requireOwnership(
   transaction: DatabaseTransaction,
   claim: RunClaim,
-): Promise<SessionRow> {
+): Promise<void> {
   const session = await lockSession(transaction, claim.run.sessionId);
   if (!session) throw new Error(`Run ${claim.run.id} session is unavailable`);
+
   const [run] = await transaction
     .select({ id: AGENT_RUNS.id })
     .from(AGENT_RUNS)
     .where(getOwnedRunFilter(claim));
   if (!run) throw new Error(`Run ${claim.run.id} execution lease is no longer owned`);
-  return session;
 }
 
+/** Reads current permission before checking the lease that authorizes the next action. */
+export async function readRunAuthority(
+  transaction: DatabaseTransaction,
+  claim: RunClaim,
+): Promise<RunToolAccess> {
+  const session = await lockSession(transaction, claim.run.sessionId);
+  if (!session) throw new Error(`Run ${claim.run.id} session is unavailable`);
+
+  const agent = await readUsableAgent({
+    transaction,
+    agentId: session.agentId,
+    userId: claim.userId,
+  });
+  // Permission locks can wait; only a lease checked after those waits can authorize another tool.
+  const [run] = await transaction
+    .select({ status: AGENT_RUNS.status })
+    .from(AGENT_RUNS)
+    .where(getOwnedRunFilter(claim));
+  if (!run) throw new Error(`Run ${claim.run.id} execution lease is no longer owned`);
+
+  const shouldCancel = run.status === 'cancelling' || !agent;
+
+  return { status: shouldCancel ? 'cancel_requested' : 'allowed' };
+}
+
+/** Fences every write with both owner identity and the database-clock lease deadline. */
 export function getOwnedRunFilter(claim: RunClaim): SQL | undefined {
   return and(
     eq(AGENT_RUNS.id, claim.run.id),
@@ -245,6 +300,7 @@ function getLeaseDeadline() {
   return sql`clock_timestamp() + ${RUN_LEASE_DURATION_MS} * interval '1 millisecond'`;
 }
 
+/** Converts storage timestamps at the durable Run boundary. */
 export function parseRun(row: typeof AGENT_RUNS.$inferSelect): AgentRun {
   return AGENT_RUN_SCHEMA.parse({
     ...row,
@@ -254,6 +310,7 @@ export function parseRun(row: typeof AGENT_RUNS.$inferSelect): AgentRun {
   });
 }
 
+/** Advances the display revision under the caller's existing Session lock. */
 export async function advanceRevision(
   transaction: DatabaseTransaction,
   sessionId: string,

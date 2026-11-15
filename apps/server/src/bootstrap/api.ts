@@ -1,6 +1,7 @@
 import { pino } from 'pino';
 import { hasWorkspaceAgents } from '../agents/index.js';
 import {
+  type AuthenticationConfig,
   createAuthentication,
   createAuthRateLimit,
   type OAuthCredentials,
@@ -27,40 +28,43 @@ async function main() {
   const env = parseApiEnv(process.env);
   const logger = pino({ level: env.LOG_LEVEL, base: { process: 'api' } });
   const onError = (error: Error) => logger.error({ err: error }, 'API dependency failed');
+
   using shutdown = observeShutdown();
   await using database = openDatabase({ url: env.DATABASE_URL, onError });
   await using redis = openRedis({ url: env.REDIS_URL, role: 'api', onError });
   await redis.client.connect();
+
   const sendEmail = env.RESEND_API_KEY
     ? createResendSender({ apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM })
     : undefined;
+  const authenticationConfig = {
+    name: env.APP_NAME,
+    baseUrl: env.BETTER_AUTH_URL,
+    secret: env.BETTER_AUTH_SECRET,
+    google: getOAuthCredentials({
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+    }),
+    github: getOAuthCredentials({
+      clientId: env.GITHUB_CLIENT_ID,
+      clientSecret: env.GITHUB_CLIENT_SECRET,
+    }),
+  } satisfies AuthenticationConfig;
+  const workspacePlugin = createWorkspacePlugin({
+    baseUrl: env.BETTER_AUTH_URL,
+    sendEmail,
+    canDeleteWorkspace: async (workspaceId) =>
+      !(await hasWorkspaceAgents({ db: database.db, workspaceId })),
+  });
   await using authentication = createAuthentication({
     db: database.db,
-    config: {
-      name: env.APP_NAME,
-      baseUrl: env.BETTER_AUTH_URL,
-      secret: env.BETTER_AUTH_SECRET,
-      google: getOAuthCredentials({
-        clientId: env.GOOGLE_CLIENT_ID,
-        clientSecret: env.GOOGLE_CLIENT_SECRET,
-      }),
-      github: getOAuthCredentials({
-        clientId: env.GITHUB_CLIENT_ID,
-        clientSecret: env.GITHUB_CLIENT_SECRET,
-      }),
-    },
+    config: authenticationConfig,
     sendEmail,
     rateLimit: createAuthRateLimit({ redis: redis.client, prefix: env.REDIS_PREFIX }),
     onError,
-    plugins: [
-      createWorkspacePlugin({
-        baseUrl: env.BETTER_AUTH_URL,
-        sendEmail,
-        canDeleteWorkspace: async (workspaceId) =>
-          !(await hasWorkspaceAgents({ db: database.db, workspaceId })),
-      }),
-    ],
+    plugins: [workspacePlugin],
   });
+
   const execution = env.cloudAgent
     ? {
         db: database.db,
@@ -75,6 +79,7 @@ async function main() {
     onError,
     ...(execution ? { execution } : {}),
   });
+
   // Reverse-order disposal stops incoming requests before closing their backing connections.
   await using http = await openHttpServer({
     app,
@@ -82,6 +87,7 @@ async function main() {
     port: env.PORT,
   });
   logger.info({ port: http.port }, 'API listening');
+
   await shutdown.wait;
   logger.info('API stopping');
 }
@@ -95,5 +101,6 @@ function getOAuthCredentials({
 }): OAuthCredentials | undefined {
   // Disabled providers stay absent from the SDK's provider registry.
   if (!clientId || !clientSecret) return undefined;
+
   return { clientId, clientSecret };
 }

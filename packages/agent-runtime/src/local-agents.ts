@@ -34,6 +34,7 @@ export async function discoverLocalAgents({
   // Empty PATH segments must not implicitly add the current working directory.
   const directories = searchPath.split(separator).filter((directory) => directory.length > 0);
   const suffixes = platform === 'win32' ? executableExtensions : [''];
+
   // Agent installations are independent; candidates for each Agent remain ordered.
   return await Promise.all(LOCAL_AGENT_DEFINITIONS.map(discoverAgent));
 
@@ -41,6 +42,7 @@ export async function discoverLocalAgents({
     const candidates = getExecutableCandidates({ command: agent.command, directories, suffixes });
     const commandPath = await findExecutablePath({ candidates, platform, signal });
     if (!commandPath) return { agent, installation: { status: 'missing' } };
+
     return { agent, installation: { status: 'found', path: commandPath } };
   }
 }
@@ -55,6 +57,7 @@ function getExecutableCandidates({
   suffixes: readonly string[];
 }) {
   const commandNames = suffixes.map((suffix) => `${command}${suffix}`);
+
   // Directory order wins before extension order, matching the supplied PATH.
   return directories.flatMap((directory) => commandNames.map((name) => join(directory, name)));
 }
@@ -76,6 +79,7 @@ async function findExecutablePath({
     signal?.throwIfAborted();
     if (canExecute) return commandPath;
   }
+
   return undefined;
 }
 
@@ -89,7 +93,9 @@ async function isExecutable({
   try {
     const entry = await stat(commandPath);
     if (!entry.isFile()) return false;
+
     await access(commandPath, platform === 'win32' ? constants.F_OK : constants.X_OK);
+
     return true;
   } catch (error) {
     // Missing or inaccessible candidates are normal during discovery; other I/O failures matter.
@@ -100,6 +106,7 @@ async function isExecutable({
       ['ENOENT', 'ENOTDIR', 'EACCES'].includes(error.code)
     )
       return false;
+
     throw new Error(`Cannot inspect Agent command ${commandPath}`, {
       cause: error,
     });

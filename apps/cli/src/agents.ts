@@ -17,10 +17,12 @@ export async function runAgentsCommand({
 }): Promise<CliResult> {
   const agents = await discoverLocalAgents({ searchPath, executableExtensions, platform, signal });
   if (format === 'json') return { output: JSON.stringify(agents, null, 2), exitCode: 0 };
+
   // Presence is reported honestly; finding a binary does not certify its execution protocol.
   const lines = agents.map(
     ({ agent, installation }) =>
       `${agent.name}: ${installation.status === 'found' ? installation.path : 'not installed'}`,
   );
+
   return { output: lines.join('\n'), exitCode: 0 };
 }

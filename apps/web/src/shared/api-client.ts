@@ -20,6 +20,7 @@ export async function getPublicConfig(signal?: AbortSignal): Promise<PublicConfi
     signal: getRequestSignal(signal),
   });
   if (!response.ok) throw new Error(`Public configuration returned HTTP ${response.status}`);
+
   return PUBLIC_CONFIG_SCHEMA.parse(await response.json());
 }
 
@@ -28,6 +29,7 @@ export async function getReadiness(signal?: AbortSignal): Promise<Readiness> {
   const response = await fetch('/api/health/ready', { signal: getRequestSignal(signal) });
   if (response.status !== 200 && response.status !== 503)
     throw new Error(`Readiness endpoint returned HTTP ${response.status}`);
+
   return READINESS_SCHEMA.parse(await response.json());
 }
 
@@ -35,5 +37,6 @@ function getRequestSignal(signal: AbortSignal | undefined) {
   // Query cancellation and a stalled-response deadline must remain effective together.
   const deadline = AbortSignal.timeout(API_TIMEOUT_MS);
   if (!signal) return deadline;
+
   return AbortSignal.any([signal, deadline]);
 }

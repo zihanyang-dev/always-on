@@ -52,9 +52,12 @@ export async function createAgentSession({
   agentId: string;
   userId: string;
 }): Promise<AgentSession | null> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(create);
+
+  async function create(transaction: DatabaseTransaction) {
     const agent = await readUsableAgent({ transaction, agentId, userId });
     if (!agent) return null;
+
     // Snapshot execution settings without copying the Agent's identity or visibility.
     const configuration = {
       model: agent.model,
@@ -66,8 +69,9 @@ export async function createAgentSession({
       .values({ agentId, workspaceId: agent.workspaceId, createdBy: userId, configuration })
       .returning();
     if (!session) throw new Error(`Session creation for Agent ${agentId} returned no row`);
+
     return parseSession(session);
-  });
+  }
 }
 
 /** Changes subsequent Run defaults; already admitted Runs retain their own configuration. */
@@ -77,17 +81,21 @@ export async function updateSessionConfiguration({
   userId,
   configuration,
 }: SessionConfigurationChange): Promise<AgentSession | null> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(update);
+
+  async function update(transaction: DatabaseTransaction) {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
     if (!session) return null;
+
     const [updated] = await transaction
       .update(AGENT_SESSIONS)
       .set({ configuration, revision: sql`${AGENT_SESSIONS.revision} + 1` })
       .where(eq(AGENT_SESSIONS.id, sessionId))
       .returning();
     if (!updated) throw new Error(`Session ${sessionId} disappeared during configuration update`);
+
     return parseSession(updated);
-  });
+  }
 }
 
 /** Reads a consistent durable display view while execution writes wait on the session lock. */
@@ -96,11 +104,14 @@ export async function readSessionSnapshot({
   sessionId,
   userId,
 }: SessionAccess): Promise<SessionSnapshot | null> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(readSnapshot);
+
+  async function readSnapshot(transaction: DatabaseTransaction) {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
     if (!session) return null;
+
     return readSessionView(transaction, session);
-  });
+  }
 }
 
 /** Reads the current display revision only while the caller retains resource access. */
@@ -109,10 +120,13 @@ export async function readSessionRevision({
   sessionId,
   userId,
 }: SessionAccess): Promise<number | null> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(readRevision);
+
+  async function readRevision(transaction: DatabaseTransaction) {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
+
     return session?.revision ?? null;
-  });
+  }
 }
 
 /** Commits Inbox input, queued Run and the user's display message in one transaction. */
@@ -122,21 +136,26 @@ export async function submitSessionMessage({
   userId,
   input,
 }: SessionMessageSubmission): Promise<MessageSubmission> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(submit);
+
+  async function submit(transaction: DatabaseTransaction): Promise<MessageSubmission> {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
     if (!session) return { status: 'not_found' };
+
     const repeated = await readRepeatedSubmission({ transaction, sessionId, input });
     if (repeated) return repeated;
     // Retries keep their original identity, even after a later Run requires recovery.
     if (await hasUncertainRun(transaction, sessionId)) return { status: 'recovery_required' };
+
     const run = await recordSessionInput({
       transaction,
       sessionId,
       configuration: session.configuration,
       input,
     });
+
     return { status: 'accepted', run };
-  });
+  }
 }
 
 /** Persists cancellation; disconnecting an event subscription never calls this operation. */
@@ -146,15 +165,19 @@ export async function cancelSessionRun({
   runId,
   userId,
 }: SessionRunCancellation): Promise<AgentRun | null> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(cancel);
+
+  async function cancel(transaction: DatabaseTransaction) {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
     if (!session) return null;
+
     const [run] = await transaction
       .select()
       .from(AGENT_RUNS)
       .where(and(eq(AGENT_RUNS.id, runId), eq(AGENT_RUNS.sessionId, sessionId)));
     if (!run) return null;
     if (run.status !== 'queued' && run.status !== 'running') return parseRun(run);
+
     const change =
       run.status === 'queued'
         ? { status: 'cancelled' as const, finishedAt: sql`clock_timestamp()` }
@@ -165,9 +188,11 @@ export async function cancelSessionRun({
       .where(eq(AGENT_RUNS.id, runId))
       .returning();
     if (!updated) throw new Error(`Run ${runId} disappeared during cancellation`);
+
     await advanceRevision(transaction, sessionId);
+
     return parseRun(updated);
-  });
+  }
 }
 
 async function readSessionAccess({
@@ -187,6 +212,7 @@ async function readSessionAccess({
     .where(and(eq(AGENT_SESSIONS.id, sessionId), eq(AGENT_SESSIONS.createdBy, userId)))
     .for(action === 'read' ? 'share' : 'update');
   if (!session) return null;
+
   const [membership] = await transaction
     .select({ roles: WORKSPACE_MEMBERS.role })
     .from(WORKSPACE_MEMBERS)
@@ -202,6 +228,7 @@ async function readSessionAccess({
     const agent = await readUsableAgent({ transaction, agentId: session.agentId, userId });
     if (!agent) return null;
   }
+
   // Keep storage references private and parse persisted configuration before another Run uses it.
   return parseSession(session);
 }
@@ -225,6 +252,7 @@ async function readSessionView(transaction: DatabaseTransaction, session: AgentS
       .orderBy(AGENT_MESSAGES.position),
   ]);
   const [run] = runs;
+
   return {
     session,
     run: run ? parseRun(run) : null,
@@ -238,6 +266,7 @@ async function hasUncertainRun(transaction: DatabaseTransaction, sessionId: stri
     .from(AGENT_RUNS)
     .where(and(eq(AGENT_RUNS.sessionId, sessionId), eq(AGENT_RUNS.status, 'recovery_required')))
     .limit(1);
+
   return run !== undefined;
 }
 
@@ -263,6 +292,7 @@ async function readRepeatedSubmission({
     );
   if (!existing) return null;
   if (existing.run.inputText !== input.text) return { status: 'conflict' };
+
   return { status: 'duplicate', run: parseRun(existing.run) };
 }
 
@@ -288,11 +318,13 @@ async function recordSessionInput({
     })
     .returning({ id: INBOX_EVENTS.id });
   if (!event) throw new Error(`Inbox submission for session ${sessionId} returned no row`);
+
   const [run] = await transaction
     .insert(AGENT_RUNS)
     .values({ sessionId, inputId: event.id, inputText: input.text, configuration })
     .returning();
   if (!run) throw new Error(`Run admission for session ${sessionId} returned no row`);
+
   await transaction.insert(AGENT_MESSAGES).values({
     sessionId,
     runId: run.id,
@@ -302,6 +334,7 @@ async function recordSessionInput({
     text: input.text,
   });
   await advanceRevision(transaction, sessionId);
+
   return parseRun(run);
 }
 
@@ -314,6 +347,7 @@ async function advanceRevision(transaction: DatabaseTransaction, sessionId: stri
 
 function parseSession(row: SessionRow) {
   const configuration = AGENT_CONFIGURATION_SCHEMA.parse(row.configuration);
+
   return AGENT_SESSION_SCHEMA.parse({
     ...row,
     configuration,

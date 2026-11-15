@@ -107,6 +107,10 @@ it('rejects untrusted origins and redirects before creating an account or starti
     body: { provider: 'google', callbackURL: 'https://untrusted.example' },
   });
   expect(social.status).toBe(403);
+  fixture.expectErrors([
+    'Authentication: Invalid origin: https://untrusted.example',
+    'Authentication: Invalid callbackURL: https://untrusted.example',
+  ]);
 });
 
 it.each(['google', 'github'])(
@@ -202,7 +206,7 @@ async function openAuthFixture() {
     verifyEmail,
     readEmail,
     recordOAuthState,
-    errors,
+    expectErrors,
     [Symbol.asyncDispose]: dispose,
   };
 
@@ -267,6 +271,13 @@ async function openAuthFixture() {
         .where(inArray(AUTHENTICATION_TABLES.verification.identifier, verificationIds));
     const keys = await redis.client.keys(`${prefix}:*`);
     if (keys.length > 0) await redis.client.del(...keys);
+    if (errors.length > 0)
+      throw new AggregateError(errors, 'Authentication fixture dependencies failed');
+  }
+
+  function expectErrors(messages: readonly string[]) {
+    expect(errors.map((error) => error.message)).toEqual(messages);
+    errors.length = 0;
   }
 
   function recordOAuthState(state: string) {

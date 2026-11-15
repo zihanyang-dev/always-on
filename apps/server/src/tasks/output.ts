@@ -15,6 +15,7 @@ export function createRunOutput({
   publish: (event: SessionEvent) => Promise<void>;
 }): ExecutionContext['emit'] {
   const messages = new Map<number, AgentMessage>();
+
   return emit;
 
   async function emit(event: Parameters<ExecutionContext['emit']>[0]) {
@@ -29,10 +30,12 @@ export function createRunOutput({
         const message = messages.get(event.index);
         if (!message)
           throw new Error(`Run ${claim.run.id} received text before message ${event.index}`);
+
         const updated = { ...message, text: message.text + event.text };
         messages.set(event.index, updated);
         // Replay uses full drafts so a retained suffix can reconstruct the latest partial message.
         await publish({ type: 'message', message: updated });
+
         return;
       }
       case 'tool_started':

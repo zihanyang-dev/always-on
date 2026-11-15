@@ -56,6 +56,7 @@ export function createAuthentication({
   if (config.google) methods.push('google');
   if (config.github) methods.push('github');
   if (sendEmail) methods.push('email-password');
+
   const socialProviders = {
     ...(config.google ? { google: config.google } : {}),
     ...(config.github ? { github: config.github } : {}),
@@ -105,6 +106,7 @@ export function createAuthentication({
     logger: { level: 'error', log: reportSdkError },
     telemetry: { enabled: false },
   } satisfies BetterAuthOptions);
+
   return { methods, handle, getUser, [Symbol.asyncDispose]: dispose };
 
   async function handle({ request, clientIp }: { request: Request; clientIp: string | undefined }) {
@@ -112,6 +114,7 @@ export function createAuthentication({
     // Only the server's socket address may supply this header; discard client-supplied values.
     headers.delete(CLIENT_IP_HEADER);
     if (clientIp) headers.set(CLIENT_IP_HEADER, clientIp);
+
     return await auth.handler(new Request(request, { headers }));
   }
 
@@ -121,6 +124,7 @@ export function createAuthentication({
     trustedHeaders.delete(CLIENT_IP_HEADER);
     const session = await auth.api.getSession({ headers: trustedHeaders });
     if (!session) return null;
+
     // The profile allowlist keeps SDK timestamps, session tokens and provider credentials private.
     return USER_PROFILE_SCHEMA.parse({ ...session.user, image: session.user.image ?? null });
   }
@@ -128,6 +132,7 @@ export function createAuthentication({
   async function sendVerificationEmail({ user, url }: { user: { email: string }; url: string }) {
     // OAuth can also request verification, even when password sign-in is disabled.
     if (!sendEmail) throw new Error('Email delivery is not configured');
+
     // Better Auth signs and expires the link; this callback only delivers it.
     await sendEmail({
       to: user.email,
@@ -138,6 +143,7 @@ export function createAuthentication({
 
   async function sendResetPassword({ user, url }: { user: { email: string }; url: string }) {
     if (!sendEmail) throw new Error('Email delivery is not configured');
+
     // The SDK owns token issuance and consumption. The URL must never enter application logs.
     await sendEmail({
       to: user.email,
@@ -174,11 +180,14 @@ export function createAuthentication({
     // HTTP closes first; finish accepted mail and session updates before releasing their connections.
     // Tasks may schedule follow-up work, so one snapshot of the pending set is insufficient.
     const failures = new Set<unknown>();
+
     while (pending.size > 0) {
       // Wait for every task before surfacing independent failures during teardown.
       const outcomes = await Promise.allSettled(pending);
+
       for (const outcome of outcomes) {
         if (outcome.status === 'fulfilled') continue;
+
         failures.add(outcome.reason);
       }
     }

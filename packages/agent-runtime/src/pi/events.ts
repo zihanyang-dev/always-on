@@ -9,10 +9,12 @@ export function createSessionObserver(
   onEvent: (event: ExecutionEvent) => void,
 ): (event: AgentSessionEvent) => void {
   let messageIndex = -1;
+
   return observeEvent;
 
   function observeEvent(event: AgentSessionEvent) {
     if (event.type === 'message_start') messageIndex += 1;
+
     const projected = mapSessionEvent(event, messageIndex);
     if (projected) onEvent(projected);
   }
@@ -71,6 +73,7 @@ function mapMessage(event: MessageEvent, index: number): ExecutionEvent | undefi
   const { message } = event;
   if (message.role !== 'user' && message.role !== 'assistant' && message.role !== 'toolResult')
     return;
+
   const role = message.role === 'toolResult' ? 'tool' : message.role;
   if (event.type === 'message_start') return { type: 'message_started', index, role };
 
@@ -82,10 +85,12 @@ function mapMessage(event: MessageEvent, index: number): ExecutionEvent | undefi
     message.role === 'assistant' &&
     message.stopReason !== 'stop' &&
     message.stopReason !== 'toolUse';
+
   return { type: 'message', index, role, state: isInterrupted ? 'interrupted' : 'completed', text };
 }
 
 function mapTextDelta(event: MessageUpdate, index: number): ExecutionEvent | undefined {
   if (event.assistantMessageEvent.type !== 'text_delta') return;
+
   return { type: 'text_delta', index, text: event.assistantMessageEvent.delta };
 }

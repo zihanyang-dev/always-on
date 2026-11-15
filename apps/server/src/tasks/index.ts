@@ -3,6 +3,7 @@ export {
   claimRun,
   listQueuedRuns,
   type RunClaim,
+  type RunToolAccess,
   recoverExpiredRuns,
   renewRun,
 } from './ownership.js';
@@ -12,7 +13,6 @@ export {
   completeRun,
   finishRunTool,
   type RunCompletion,
-  type RunToolAccess,
   startRunTool,
   writeRunMessage,
 } from './store.js';

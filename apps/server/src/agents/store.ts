@@ -30,6 +30,7 @@ export async function hasWorkspaceAgents({
     .from(AGENTS)
     .where(eq(AGENTS.workspaceId, workspaceId))
     .limit(1);
+
   return agent !== undefined;
 }
 
@@ -43,9 +44,12 @@ export async function createAgent({
   userId: string;
   input: CreateAgent;
 }): Promise<Agent | null> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(create);
+
+  async function create(transaction: DatabaseTransaction) {
     const roles = await readMembership({ transaction, workspaceId: input.workspaceId, userId });
     if (!roles || !hasAgentPermission({ roles, action: 'create' })) return null;
+
     const configuration = {
       model: input.model,
       reasoningEffort: input.reasoningEffort,
@@ -63,8 +67,9 @@ export async function createAgent({
       .returning();
     if (!created)
       throw new Error(`Agent creation in workspace ${input.workspaceId} returned no row`);
+
     return parseAgent(created);
-  });
+  }
 }
 
 /** Lists definitions visible to the caller after checking current workspace membership. */
@@ -77,9 +82,12 @@ export async function listAgents({
   workspaceId: string;
   userId: string;
 }): Promise<readonly Agent[] | null> {
-  return db.transaction(async (transaction) => {
+  return db.transaction(list);
+
+  async function list(transaction: DatabaseTransaction) {
     const roles = await readMembership({ transaction, workspaceId, userId });
     if (!roles || !hasAgentPermission({ roles, action: 'read' })) return null;
+
     const rows = await transaction
       .select()
       .from(AGENTS)
@@ -91,8 +99,9 @@ export async function listAgents({
       )
       .orderBy(AGENTS.createdAt, AGENTS.id)
       .limit(100);
+
     return rows.map(parseAgent);
-  });
+  }
 }
 
 /** Reads an accessible definition under the caller's admission transaction. */
@@ -112,8 +121,10 @@ export async function readUsableAgent({
     .for('share');
   if (!agent) return null;
   if (agent.visibility === 'private' && agent.createdBy !== userId) return null;
+
   const roles = await readMembership({ transaction, workspaceId: agent.workspaceId, userId });
   if (!roles || !hasAgentPermission({ roles, action: 'use' })) return null;
+
   return parseAgent(agent);
 }
 
@@ -129,6 +140,7 @@ export function isAvailableConfiguration({
     (model) =>
       model.provider === configuration.model.provider && model.id === configuration.model.id,
   );
+
   return selected?.reasoningEfforts.includes(configuration.reasoningEffort) ?? false;
 }
 
@@ -149,11 +161,13 @@ async function readMembership({
       and(eq(WORKSPACE_MEMBERS.organizationId, workspaceId), eq(WORKSPACE_MEMBERS.userId, userId)),
     )
     .for('share');
+
   return membership?.roles;
 }
 
 function parseAgent(row: AgentRow) {
   const configuration = AGENT_CONFIGURATION_SCHEMA.parse(row.configuration);
+
   return AGENT_SCHEMA.parse({
     id: row.id,
     workspaceId: row.workspaceId,

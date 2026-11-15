@@ -29,8 +29,10 @@ export async function executePi(
   context: ExecutionContext,
 ): Promise<PiExecutionResult> {
   if (context.signal?.aborted) return { status: 'cancelled', checkpoint: null };
+
   await using conversation = await openPiSession(request.session);
   if (context.signal?.aborted) return { status: 'cancelled', checkpoint: null };
+
   const execution = new PiExecutionResources(conversation.sdk, context);
   let outcome: PromiseSettledResult<void>;
   {
@@ -47,6 +49,7 @@ export async function executePi(
     });
   if (context.signal?.aborted)
     return { status: 'cancelled', checkpoint: await readCheckpointFile(conversation.sessionFile) };
+
   return getPiResult(conversation);
 }
 
@@ -72,8 +75,10 @@ class PiExecutionResources implements AsyncDisposable {
   getFailure(outcome: PromiseSettledResult<void>): Error | undefined {
     const failures = new Set(this.#failures);
     if (outcome.status === 'rejected') failures.add(getExecutionError(outcome.reason));
+
     const [first] = failures;
     if (failures.size < 2) return first;
+
     return new AggregateError(failures, `Pi session ${this.#sdk.sessionId} failed`, {
       cause: first,
     });
@@ -84,11 +89,14 @@ class PiExecutionResources implements AsyncDisposable {
     this.#unsubscribe();
     await Promise.all(this.#notifications.values());
     await this.#stopping;
+
     try {
       if (this.#failures.size > 0) {
         await this.#writer.abort();
+
         return;
       }
+
       await this.#writer.close();
     } catch (error) {
       this.#failures.add(getExecutionError(error));
@@ -104,8 +112,10 @@ class PiExecutionResources implements AsyncDisposable {
         new Error(`Pi session ${this.#sdk.sessionId} exceeded its output backlog`),
       );
       this.#requestStop();
+
       return;
     }
+
     // Pi does not await subscribers; retain every delivery until the receiver acknowledges it.
     const notification = this.#deliver(event);
     this.#notifications.set(event, notification);
@@ -124,8 +134,7 @@ class PiExecutionResources implements AsyncDisposable {
   }
 
   #requestStop = () => {
-    if (this.#stopping) return;
-    this.#stopping = this.#stopSdk();
+    this.#stopping ??= this.#stopSdk();
     void this.#stopping;
   };
 
@@ -145,6 +154,7 @@ async function getPiResult({ sdk, sessionFile }: PiSession): Promise<PiExecution
       status: 'incomplete',
       message: `Pi session ${sdk.sessionId} produced no assistant result`,
     };
+
   switch (assistant.stopReason) {
     case 'stop':
       return {
@@ -177,15 +187,18 @@ async function getPiResult({ sdk, sessionFile }: PiSession): Promise<PiExecution
 async function readCheckpointFile(sessionFile: string) {
   try {
     await access(sessionFile);
+
     return createPiCheckpoint(sessionFile);
   } catch (error) {
     // Pi delays its first file write; cancellation before a response may leave no checkpoint.
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+
     throw error;
   }
 }
 
 function getExecutionError(error: unknown) {
   if (error instanceof Error) return error;
+
   return new Error('Pi execution rejected with a non-Error value', { cause: error });
 }

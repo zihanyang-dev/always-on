@@ -270,7 +270,7 @@ async function openPgOrganizationFixture(
     readWorkspaces,
     readMembers,
     waitForBlockedMutation,
-    [Symbol.asyncDispose]: dispose,
+    [Symbol.asyncDispose]: resources.disposeAsync.bind(resources),
   };
 
   async function createWorkspace() {
@@ -324,9 +324,5 @@ async function openPgOrganizationFixture(
     await database.db
       .delete(AUTHENTICATION_TABLES.user)
       .where(inArray(AUTHENTICATION_TABLES.user.email, emails));
-  }
-
-  async function dispose() {
-    await resources.disposeAsync();
   }
 }

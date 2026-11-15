@@ -116,5 +116,6 @@ function getConnectionState({
   if (hasError) return CONNECTION_STATES.failed;
   if (isPending) return CONNECTION_STATES.checking;
   if (isReady) return CONNECTION_STATES.ready;
+
   return CONNECTION_STATES.waiting;
 }

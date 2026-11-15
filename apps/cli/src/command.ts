@@ -35,7 +35,9 @@ export function parseCliCommand(args: readonly string[]): CliCommand {
   // Help must remain usable even when saved configuration is broken.
   if (values.help || name === 'help') return { kind: 'help' };
   if (positionals.length > 1) throw new Error('Expected one command: status or agents');
+
   const format = values.json ? 'json' : 'text';
+
   switch (name) {
     case 'agents':
       if (values.server !== undefined) throw new Error('--server is only available for status');

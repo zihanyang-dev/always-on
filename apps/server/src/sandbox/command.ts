@@ -29,6 +29,7 @@ export async function executeSandboxCommand(
     await using _command = execution;
     [outcome] = await Promise.allSettled([execution.wait()]);
   }
+
   return execution.getResult(outcome);
 
   function deliverOutput(text: string) {
@@ -65,10 +66,12 @@ class E2bCommand implements AsyncDisposable {
     try {
       const result = await this.#handle.wait();
       this.#hasExited = true;
+
       return { exitCode: result.exitCode };
     } catch (error) {
       // A nonzero exit is still an acknowledged process exit, not a transport failure.
       if (error instanceof CommandExitError) this.#hasExited = true;
+
       throw error;
     }
   }
@@ -82,9 +85,11 @@ class E2bCommand implements AsyncDisposable {
       );
     if (this.#stopError) throw this.#stopError;
     if (failure) throw failure;
+
     this.#signal?.throwIfAborted();
     if (outcome.status === 'fulfilled') return outcome.value;
     if (outcome.reason instanceof CommandExitError) return { exitCode: outcome.reason.exitCode };
+
     throw new Error('Sandbox command has no exit result');
   }
 
@@ -92,6 +97,7 @@ class E2bCommand implements AsyncDisposable {
     this.#cancellation?.[Symbol.dispose]();
     // Losing the event stream does not mean the command stopped running in the VM.
     if (!this.#hasExited) this.#requestStop();
+
     await this.#stopping;
   }
 
@@ -123,5 +129,6 @@ class E2bCommand implements AsyncDisposable {
 function getCommandFailure(error: unknown) {
   if (error instanceof CommandExitError) return undefined;
   if (error instanceof Error) return error;
+
   return new Error('Sandbox command transport failed', { cause: error });
 }

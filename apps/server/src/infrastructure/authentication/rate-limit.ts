@@ -39,6 +39,7 @@ export function createAuthRateLimit({
       max,
     );
     const [allowed, retryAfter] = LIMIT_RESULT_SCHEMA.parse(result);
+
     return { allowed: allowed === 1, retryAfter: allowed === 1 ? null : retryAfter };
   }
 }

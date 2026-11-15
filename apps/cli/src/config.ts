@@ -56,6 +56,7 @@ export async function loadCliConfig({
     configPath,
     isExplicit: env.ALWAYS_ON_CONFIG !== undefined,
   });
+
   // Resolve precedence once, before any command can consume the selected endpoint.
   return CONNECTION_SCHEMA.parse({
     serverUrl: serverUrl ?? env.ALWAYS_ON_URL ?? preferences.serverUrl ?? 'http://localhost:3001',
@@ -77,6 +78,7 @@ function getConfigDirectory({
     return join(homeDirectory, 'Library', 'Application Support', 'always-on');
   if (platform === 'win32')
     return join(applicationDirectory ?? join(homeDirectory, 'AppData', 'Roaming'), 'always-on');
+
   return join(xdgDirectory ?? join(homeDirectory, '.config'), 'always-on');
 }
 
@@ -89,11 +91,13 @@ async function readPreferences({
 }) {
   try {
     const contents: unknown = JSON.parse(await readFile(configPath, 'utf8'));
+
     return PREFERENCES_SCHEMA.parse(contents);
   } catch (error) {
     const isMissing = error instanceof Error && 'code' in error && error.code === 'ENOENT';
     // An absent default profile is normal; an explicitly selected file must exist.
     if (isMissing && !isExplicit) return PREFERENCES_SCHEMA.parse({});
+
     throw new Error(`Cannot read CLI settings at ${configPath}`, {
       cause: error,
     });

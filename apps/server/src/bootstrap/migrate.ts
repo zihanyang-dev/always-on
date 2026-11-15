@@ -1,4 +1,4 @@
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { openDatabase } from '../infrastructure/database/index.js';
 import { parseDatabaseEnv } from './env.js';
@@ -11,7 +11,7 @@ try {
     onError: reportError,
   });
   await migrate(database.db, {
-    migrationsFolder: fileURLToPath(new URL('../../migrations', import.meta.url)),
+    migrationsFolder: join(import.meta.dirname, '../../migrations'),
   });
   console.log('Database migrations applied.');
 } catch (error) {

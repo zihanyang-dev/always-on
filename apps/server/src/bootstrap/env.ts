@@ -56,8 +56,10 @@ function validateAuthenticationEnv(
     ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
     ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'],
   ] as const;
+
   for (const [clientId, clientSecret] of pairs) {
     if (Boolean(env[clientId]) === Boolean(env[clientSecret])) continue;
+
     context.addIssue({
       code: 'custom',
       path: [clientId],
@@ -76,6 +78,7 @@ function validateAuthenticationEnv(
 export function parseApiEnv(input: unknown): ApiEnv {
   const result = API_ENV_SCHEMA.safeParse(input);
   if (result.success) return { ...result.data, cloudAgent: parseCloudAgentConfiguration(input) };
+
   throwConfigurationError({ role: 'API', issues: result.error.issues });
 }
 
@@ -83,6 +86,7 @@ export function parseApiEnv(input: unknown): ApiEnv {
 export function parseWorkerEnv(input: unknown): WorkerEnv {
   const result = WORKER_ENV_SCHEMA.safeParse(input);
   if (result.success) return { ...result.data, cloudAgent: parseCloudAgentConfiguration(input) };
+
   throwConfigurationError({ role: 'Worker', issues: result.error.issues });
 }
 
@@ -90,6 +94,7 @@ export function parseWorkerEnv(input: unknown): WorkerEnv {
 export function parseDatabaseEnv(input: unknown): DatabaseEnv {
   const result = DATABASE_ENV_SCHEMA.safeParse(input);
   if (result.success) return result.data;
+
   throwConfigurationError({ role: 'database', issues: result.error.issues });
 }
 

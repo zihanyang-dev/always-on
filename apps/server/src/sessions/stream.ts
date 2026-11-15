@@ -32,14 +32,16 @@ export function streamSessionEvents(
   subscription: SessionSubscription,
 ): Response {
   const requestSignal = ctx.req.raw.signal;
-  return streamSSE(ctx, consume, reportFailure);
 
-  async function consume(stream: SSEStreamingApi) {
-    await consumeSessionEvents({ ...subscription, stream, requestSignal });
-  }
+  return streamSSE(
+    ctx,
+    (stream) => consumeSessionEvents({ ...subscription, stream, requestSignal }),
+    reportFailure,
+  );
 
   async function reportFailure(error: Error, stream: SSEStreamingApi) {
     if (stream.aborted || requestSignal.aborted) return;
+
     subscription.connection.onError(error);
     await stream.writeSSE({ event: 'unavailable', data: '{"code":"stream_unavailable"}' });
   }
@@ -67,12 +69,14 @@ async function consumeSessionEvents({
   const access = { db, sessionId, userId };
   const [snapshot, isLoggedIn] = await Promise.all([readSessionSnapshot(access), hasValidLogin()]);
   if (!snapshot || !isLoggedIn) return writeRevoked(stream);
+
   let revision = snapshot.session.revision;
   await stream.writeSSE({
     event: reader.shouldReset ? 'reset' : 'snapshot',
     data: JSON.stringify(snapshot),
     ...(reader.shouldReset ? { id: '0-0' } : {}),
   });
+
   while (!signal.aborted) {
     const events = await reader.read();
     // Login revocation and resource membership both apply to already accepted subscriptions.
@@ -81,6 +85,7 @@ async function consumeSessionEvents({
       readSessionRevision(access),
     ]);
     if (!isLoggedIn || currentRevision === null) return writeRevoked(stream);
+
     for (const entry of events)
       await stream.writeSSE({ id: entry.id, event: 'update', data: JSON.stringify(entry.event) });
     if (events.length > 0) continue;
@@ -88,10 +93,12 @@ async function consumeSessionEvents({
       // Cancellation, lease expiry and lost Redis notifications still leave authoritative PG facts.
       const snapshot = await readSessionSnapshot(access);
       if (!snapshot) return writeRevoked(stream);
+
       revision = snapshot.session.revision;
       await stream.writeSSE({ event: 'snapshot', data: JSON.stringify(snapshot) });
       continue;
     }
+
     await stream.writeSSE({ event: 'ping', data: '{}' });
   }
 }

@@ -35,6 +35,7 @@ export function createWorkspaceTools(workspace: ExecutionWorkspace): ToolDefinit
         }),
     },
   });
+
   return [
     defineTool(createReadToolDefinition(directory, { operations })),
     defineTool(createWriteToolDefinition(directory, { operations })),
@@ -46,6 +47,7 @@ export function createWorkspaceTools(workspace: ExecutionWorkspace): ToolDefinit
     const result = await shell.execute(...input);
     const outputPath = result.details?.fullOutputPath;
     if (!outputPath) return result;
+
     const outputDirectory = posix.join(directory, '.agent-outputs');
     const remotePath = posix.join(outputDirectory, basename(outputPath));
     await using output = new AsyncDisposableStack();
@@ -57,18 +59,16 @@ export function createWorkspaceTools(workspace: ExecutionWorkspace): ToolDefinit
     const content = result.content.map((part) =>
       part.type === 'text' ? { ...part, text: part.text.replaceAll(outputPath, remotePath) } : part,
     );
+    const structuredContent =
+      result.structuredContent === undefined
+        ? undefined
+        : replaceOutputPath(result.structuredContent, { outputPath, remotePath });
+
     return {
       ...result,
       content,
       details: { ...result.details, fullOutputPath: remotePath },
-      ...(result.structuredContent === undefined
-        ? {}
-        : {
-            structuredContent: replaceOutputPath(result.structuredContent, {
-              outputPath,
-              remotePath,
-            }),
-          }),
+      ...(structuredContent === undefined ? {} : { structuredContent }),
     };
   }
 }
@@ -81,5 +81,6 @@ function replaceOutputPath(
 ): StructuredContent {
   if (!content || typeof content !== 'object' || !('full_output_path' in content)) return content;
   if (content.full_output_path !== paths.outputPath) return content;
+
   return { ...content, full_output_path: paths.remotePath };
 }

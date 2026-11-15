@@ -36,6 +36,7 @@ export async function openAgentWorker({
   await using startup = new AsyncDisposableStack();
   const consumer = startup.use(openRedis({ url: redisUrl, role: 'worker', onError }));
   const progress = startup.use(openRedis({ url: redisUrl, role: 'api', onError }));
+
   const queue = new Queue(RUN_QUEUE_NAME, {
     connection: progress.client,
     prefix,
@@ -45,6 +46,7 @@ export async function openAgentWorker({
   });
   startup.defer(() => queue.close());
   queue.on('error', onError);
+
   const worker = new Worker<unknown>(RUN_QUEUE_NAME, processRun, {
     connection: consumer.client,
     prefix,
@@ -57,15 +59,18 @@ export async function openAgentWorker({
     onError(new Error(`Agent queue job ${job?.id ?? 'unknown'} failed`, { cause: error })),
   );
   await Promise.all([queue.waitUntilReady(), worker.waitUntilReady()]);
+
   const resources = startup.move();
   const stopping = new AbortController();
   const fatal = Promise.withResolvers<Error>();
   const dispatching = dispatchRuns();
   const consuming = consumeRuns();
+
   return { failure: fatal.promise, [Symbol.asyncDispose]: dispose };
 
   async function processRun(job: { name: string; data: unknown }) {
     if (job.name !== 'execute') throw new Error(`Unsupported Agent queue job ${job.name}`);
+
     const { runId } = RUN_JOB_SCHEMA.parse(job.data);
     await executeQueuedRun({
       db,
@@ -87,6 +92,7 @@ export async function openAgentWorker({
           await queue.addBulk(
             runIds.map((runId) => ({ name: 'execute', data: { runId }, opts: { jobId: runId } })),
           );
+
         await waitInterval(1_000, undefined, { signal: stopping.signal });
       }
     } catch (error) {
@@ -96,6 +102,7 @@ export async function openAgentWorker({
         error.cause === stopping.signal.reason
       )
         return;
+
       // Pending Run rows survive; let the process supervisor restart failed infrastructure.
       fatal.resolve(new Error('Agent dispatch loop failed', { cause: error }));
     }
