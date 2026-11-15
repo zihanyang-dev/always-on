@@ -114,6 +114,20 @@ it('snapshots model and reasoning selection at admission', async () => {
   expect(rows.map((row) => row.configuration)).toEqual([CONFIGURATION, configuration]);
 });
 
+it('rejects invalid stored configuration before recording another input', async () => {
+  await using fixture = await openSessionFixture();
+  await fixture.db
+    .update(AGENT_SESSIONS)
+    .set({ configuration: { invalid: true } })
+    .where(eq(AGENT_SESSIONS.id, fixture.session.id));
+  await expect(fixture.submit('invalid-configuration')).rejects.toThrow();
+  const runs = await fixture.db
+    .select({ id: AGENT_RUNS.id })
+    .from(AGENT_RUNS)
+    .where(eq(AGENT_RUNS.sessionId, fixture.session.id));
+  expect(runs).toEqual([]);
+});
+
 it('allows one writer and admits the next queued Run only after completion', async () => {
   await using fixture = await openSessionFixture();
   const [first, second] = [await fixture.submit('first'), await fixture.submit('second')];

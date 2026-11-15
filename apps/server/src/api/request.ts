@@ -7,7 +7,8 @@ import type { z } from 'zod';
 /** Identity access required by HTTP features, without authentication SDK internals. */
 export type GetRequestUser = (headers: Headers) => Promise<UserProfile | null>;
 
-type AuthenticatedApiEnv = { Variables: { userId: string } };
+/** Request state established by authentication before feature handlers run. */
+export type AuthenticatedApiEnv = { Variables: { userId: string } };
 
 /** Feature routes whose request context already contains an authenticated identity. */
 export type AuthenticatedRouter = Hono<AuthenticatedApiEnv>;

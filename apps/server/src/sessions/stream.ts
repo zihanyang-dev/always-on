@@ -1,42 +1,68 @@
-import type { SSEStreamingApi } from 'hono/streaming';
+import type { Context } from 'hono';
+import { type SSEStreamingApi, streamSSE } from 'hono/streaming';
+import type { AuthenticatedApiEnv } from '../api/index.js';
 import type { Database } from '../infrastructure/database/index.js';
 import { openSessionEventReader } from './events.js';
 import { readSessionRevision, readSessionSnapshot } from './store.js';
 
-/** Owns replay and the dedicated Redis connection for one accepted SSE subscription. */
-export async function consumeSessionEvents({
+/** Redis transport settings shared by subscriptions, separate from per-request identity. */
+export type SessionStreamConnection = {
+  readonly redisUrl: string;
+  readonly prefix: string;
+  readonly onError: (error: Error) => void;
+};
+
+type SessionSubscription = {
+  readonly db: Database;
+  readonly sessionId: string;
+  readonly userId: string;
+  readonly cursor: string;
+  readonly connection: SessionStreamConnection;
+  readonly hasValidLogin: () => Promise<boolean>;
+};
+
+interface ActiveSubscription extends SessionSubscription {
+  readonly stream: SSEStreamingApi;
+  readonly requestSignal: AbortSignal;
+}
+
+/** Owns the HTTP stream, including cancellation and dependency-failure reporting. */
+export function streamSessionEvents(
+  ctx: Context<AuthenticatedApiEnv>,
+  subscription: SessionSubscription,
+): Response {
+  const requestSignal = ctx.req.raw.signal;
+  return streamSSE(ctx, consume, reportFailure);
+
+  async function consume(stream: SSEStreamingApi) {
+    await consumeSessionEvents({ ...subscription, stream, requestSignal });
+  }
+
+  async function reportFailure(error: Error, stream: SSEStreamingApi) {
+    if (stream.aborted || requestSignal.aborted) return;
+    subscription.connection.onError(error);
+    await stream.writeSSE({ event: 'unavailable', data: '{"code":"stream_unavailable"}' });
+  }
+}
+
+async function consumeSessionEvents({
   stream,
   db,
   sessionId,
   userId,
   cursor,
-  redisUrl,
-  prefix,
+  connection,
   requestSignal,
   hasValidLogin,
-  onError,
-}: {
-  stream: SSEStreamingApi;
-  db: Database;
-  sessionId: string;
-  userId: string;
-  cursor: string;
-  redisUrl: string;
-  prefix: string;
-  requestSignal: AbortSignal;
-  hasValidLogin: () => Promise<boolean>;
-  onError: (error: Error) => void;
-}): Promise<void> {
+}: ActiveSubscription) {
   const cancellation = new AbortController();
   const signal = AbortSignal.any([cancellation.signal, requestSignal]);
   stream.onAbort(() => cancellation.abort());
   await using reader = await openSessionEventReader({
-    redisUrl,
-    prefix,
+    ...connection,
     sessionId,
     cursor,
     signal,
-    onError,
   });
   const access = { db, sessionId, userId };
   const [snapshot, isLoggedIn] = await Promise.all([readSessionSnapshot(access), hasValidLogin()]);

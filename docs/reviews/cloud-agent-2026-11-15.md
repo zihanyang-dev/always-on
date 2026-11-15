@@ -31,7 +31,7 @@
 
 逐模块检查输入边界、状态所有者、失败方式、异步任务与资源顺序。辅助 AST 扫描读取了 apps/packages/tests 下 110 个 TS/TSX 文件，检查生产代码嵌套、断言、导出返回类型及相对导入环。未发现生产代码超过约定块嵌套、非空断言、any、强制类型断言或相对导入循环；JSX 组件按规范保留返回类型推断。此扫描不是类型感知 lint，也不能替代人工职责审查。
 
-sessions/store.ts 约 317 行，包含同一 Session 的访问、输入、配置、取消和快照规则；保留集中实现，以免按执行阶段拆分后把锁、幂等和覆盖顺序交还调用者。公开导出具名，跨包使用 exports，SDK 的类型和协议留在对应适配器/组合根。英文注释重点解释确认边界、凭据隔离、取消和释放顺序。
+sessions/store.ts 约 331 行，包含同一 Session 的访问、输入、配置、取消和快照规则；保留集中实现，以免按执行阶段拆分后把锁、幂等和覆盖顺序交还调用者。公开导出具名，跨包使用 exports，SDK 的类型和协议留在对应适配器/组合根。英文注释重点解释确认边界、凭据隔离、取消和释放顺序。
 
 未增加吞错兜底、旧实现并存或本机执行回退。未启用的工具不暴露；无模型连接时关闭执行能力，不伪造可用目录或成功响应。
 
@@ -41,7 +41,7 @@ sessions/store.ts 约 317 行，包含同一 Session 的访问、输入、配置
 | --- | --- |
 | pnpm check | Biome、严格类型和测试类型检查通过 |
 | pnpm test | 45 个单元/受控 SDK 测试通过 |
-| pnpm test:integration | 53 个真实 PG/Redis/认证/队列/SSE 测试通过 |
+| pnpm test:integration | 54 个真实 PG/Redis/认证/队列/SSE 测试通过 |
 | pnpm test:sandbox | 9 个真实 E2B Firecracker 测试通过 |
 | pnpm test:cloud | 2 个真实 DeepSeek + E2B 测试通过，含完整 HTTP 到 Worker 链路 |
 | pnpm build | 所有应用与共享包构建通过 |
@@ -70,6 +70,14 @@ E2B 采用官方开源 Embed 固定提交，在 M5 专用 Colima/VZ 虚拟机启
 文件读取使用 Node Web Stream 的 async iteration；提前结束会取消下载并释放连接，依据 [Node 官方文档](https://nodejs.org/api/webstreams.html#readablestreamvaluesoptions) 和已安装 E2B 2.64.0 的 FilesystemReadOpts/read 声明。本轮沙箱功能测试还确认了实际运行行为。
 
 订阅修复只在原模块增加登录能力和 revision 对账，不增加另一套事件总线或永久流日志。PG 快照不包含未提交草稿，因此明确客户端合并规则：终态优先；pending 累计文本不向后缩短。相关协议已经同步到 [云端 Agent 后端](../cloud-agent.md)。
+
+## Session 代码形状复核
+
+路由入口集中展示方法与路径；Hono 原生 createHandlers 保留校验器到具名处理函数的类型推导，依据 [官方建议](https://hono.dev/docs/guides/best-practices#factorycreatehandlers-in-honofactory)。stream.ts 拥有 HTTP 流的启动、取消和失败报告，路由处理只负责请求校验及访问准入。
+
+store.ts 的公共操作保留事务、授权、重复输入和恢复判断；recordSessionInput 集中 Inbox、Run、用户消息与 revision 必须共同提交的顺序，readSessionView 集中当前 Run 选择及展示映射。访问读取返回经过解析的 Session，存储引用留在内部；无效的持久配置在写入新输入前拒绝，已补真实 PG 回归。
+
+本机 TypeScript 7.0.2 编译器及其语言服务均确认六个事务回调为具体 PgTransaction；未使用断言或 any。用户报告的编辑器 ts(7006) 暂未在当前工作区复现，需结合其编辑器项目配置继续核对。
 
 ## 保留的边界
 

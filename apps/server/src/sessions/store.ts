@@ -7,8 +7,10 @@ import {
   type AgentRun,
   type AgentSession,
   type SessionSnapshot,
+  type SUBMIT_MESSAGE_SCHEMA,
 } from '@always-on/contracts/agents';
 import { and, desc, eq, sql } from 'drizzle-orm';
+import type { z } from 'zod';
 import { readUsableAgent } from '../agents/index.js';
 import {
   AGENT_MESSAGES,
@@ -23,6 +25,17 @@ import { hasAgentPermission } from '../workspaces/index.js';
 
 type SessionRow = typeof AGENT_SESSIONS.$inferSelect;
 type RunRow = typeof AGENT_RUNS.$inferSelect;
+type MessageInput = z.infer<typeof SUBMIT_MESSAGE_SCHEMA>;
+type SessionAccess = { db: Database; sessionId: string; userId: string };
+interface SessionConfigurationChange extends SessionAccess {
+  configuration: AgentConfiguration;
+}
+interface SessionMessageSubmission extends SessionAccess {
+  input: MessageInput;
+}
+interface SessionRunCancellation extends SessionAccess {
+  runId: string;
+}
 
 /** A submission either reuses its original Run or creates exactly one durable dispatch intent. */
 export type MessageSubmission =
@@ -42,18 +55,15 @@ export async function createAgentSession({
   return db.transaction(async (transaction) => {
     const agent = await readUsableAgent({ transaction, agentId, userId });
     if (!agent) return null;
+    // Snapshot execution settings without copying the Agent's identity or visibility.
+    const configuration = {
+      model: agent.model,
+      reasoningEffort: agent.reasoningEffort,
+      instructions: agent.instructions,
+    } satisfies AgentConfiguration;
     const [session] = await transaction
       .insert(AGENT_SESSIONS)
-      .values({
-        agentId,
-        workspaceId: agent.workspaceId,
-        createdBy: userId,
-        configuration: {
-          model: agent.model,
-          reasoningEffort: agent.reasoningEffort,
-          instructions: agent.instructions,
-        },
-      })
+      .values({ agentId, workspaceId: agent.workspaceId, createdBy: userId, configuration })
       .returning();
     if (!session) throw new Error(`Session creation for Agent ${agentId} returned no row`);
     return parseSession(session);
@@ -66,12 +76,7 @@ export async function updateSessionConfiguration({
   sessionId,
   userId,
   configuration,
-}: {
-  db: Database;
-  sessionId: string;
-  userId: string;
-  configuration: AgentConfiguration;
-}): Promise<AgentSession | null> {
+}: SessionConfigurationChange): Promise<AgentSession | null> {
   return db.transaction(async (transaction) => {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
     if (!session) return null;
@@ -90,37 +95,11 @@ export async function readSessionSnapshot({
   db,
   sessionId,
   userId,
-}: {
-  db: Database;
-  sessionId: string;
-  userId: string;
-}): Promise<SessionSnapshot | null> {
+}: SessionAccess): Promise<SessionSnapshot | null> {
   return db.transaction(async (transaction) => {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
     if (!session) return null;
-    const [runs, messages] = await Promise.all([
-      transaction
-        .select()
-        .from(AGENT_RUNS)
-        .where(eq(AGENT_RUNS.sessionId, sessionId))
-        .orderBy(
-          desc(sql`${AGENT_RUNS.status} in ('running', 'cancelling')`),
-          desc(AGENT_RUNS.createdAt),
-          desc(AGENT_RUNS.id),
-        )
-        .limit(1),
-      transaction
-        .select()
-        .from(AGENT_MESSAGES)
-        .where(eq(AGENT_MESSAGES.sessionId, sessionId))
-        .orderBy(AGENT_MESSAGES.position),
-    ]);
-    const [run] = runs;
-    return {
-      session: parseSession(session),
-      run: run ? parseRun(run) : null,
-      messages: messages.map((message) => AGENT_MESSAGE_SCHEMA.parse(message)),
-    };
+    return readSessionView(transaction, session);
   });
 }
 
@@ -129,11 +108,7 @@ export async function readSessionRevision({
   db,
   sessionId,
   userId,
-}: {
-  db: Database;
-  sessionId: string;
-  userId: string;
-}): Promise<number | null> {
+}: SessionAccess): Promise<number | null> {
   return db.transaction(async (transaction) => {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
     return session?.revision ?? null;
@@ -146,53 +121,21 @@ export async function submitSessionMessage({
   sessionId,
   userId,
   input,
-}: {
-  db: Database;
-  sessionId: string;
-  userId: string;
-  input: { readonly sourceEventId: string; readonly text: string };
-}): Promise<MessageSubmission> {
+}: SessionMessageSubmission): Promise<MessageSubmission> {
   return db.transaction(async (transaction) => {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
     if (!session) return { status: 'not_found' };
-    const existing = await readRepeatedSubmission({ transaction, sessionId, input });
-    if (existing) return existing;
-    const [uncertain] = await transaction
-      .select({ id: AGENT_RUNS.id })
-      .from(AGENT_RUNS)
-      .where(and(eq(AGENT_RUNS.sessionId, sessionId), eq(AGENT_RUNS.status, 'recovery_required')))
-      .limit(1);
-    if (uncertain) return { status: 'recovery_required' };
-    const [event] = await transaction
-      .insert(INBOX_EVENTS)
-      .values({
-        scopeId: sessionId,
-        source: 'web',
-        sourceEventId: input.sourceEventId,
-        payload: input,
-      })
-      .returning({ id: INBOX_EVENTS.id });
-    if (!event) throw new Error(`Inbox submission for session ${sessionId} returned no row`);
-    const [run] = await transaction
-      .insert(AGENT_RUNS)
-      .values({
-        sessionId,
-        inputId: event.id,
-        inputText: input.text,
-        configuration: session.configuration,
-      })
-      .returning();
-    if (!run) throw new Error(`Run admission for session ${sessionId} returned no row`);
-    await transaction.insert(AGENT_MESSAGES).values({
+    const repeated = await readRepeatedSubmission({ transaction, sessionId, input });
+    if (repeated) return repeated;
+    // Retries keep their original identity, even after a later Run requires recovery.
+    if (await hasUncertainRun(transaction, sessionId)) return { status: 'recovery_required' };
+    const run = await recordSessionInput({
+      transaction,
       sessionId,
-      runId: run.id,
-      messageIndex: -1,
-      role: 'user',
-      state: 'completed',
-      text: input.text,
+      configuration: session.configuration,
+      input,
     });
-    await advanceRevision(transaction, sessionId);
-    return { status: 'accepted', run: parseRun(run) };
+    return { status: 'accepted', run };
   });
 }
 
@@ -202,12 +145,7 @@ export async function cancelSessionRun({
   sessionId,
   runId,
   userId,
-}: {
-  db: Database;
-  sessionId: string;
-  runId: string;
-  userId: string;
-}): Promise<AgentRun | null> {
+}: SessionRunCancellation): Promise<AgentRun | null> {
   return db.transaction(async (transaction) => {
     const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
     if (!session) return null;
@@ -260,9 +198,47 @@ async function readSessionAccess({
     )
     .for('share');
   if (!membership || !hasAgentPermission({ roles: membership.roles, action })) return null;
-  if (action === 'read') return session;
-  const agent = await readUsableAgent({ transaction, agentId: session.agentId, userId });
-  return agent ? session : null;
+  if (action === 'use') {
+    const agent = await readUsableAgent({ transaction, agentId: session.agentId, userId });
+    if (!agent) return null;
+  }
+  // Keep storage references private and parse persisted configuration before another Run uses it.
+  return parseSession(session);
+}
+
+async function readSessionView(transaction: DatabaseTransaction, session: AgentSession) {
+  const [runs, messages] = await Promise.all([
+    transaction
+      .select()
+      .from(AGENT_RUNS)
+      .where(eq(AGENT_RUNS.sessionId, session.id))
+      .orderBy(
+        desc(sql`${AGENT_RUNS.status} in ('running', 'cancelling')`),
+        desc(AGENT_RUNS.createdAt),
+        desc(AGENT_RUNS.id),
+      )
+      .limit(1),
+    transaction
+      .select()
+      .from(AGENT_MESSAGES)
+      .where(eq(AGENT_MESSAGES.sessionId, session.id))
+      .orderBy(AGENT_MESSAGES.position),
+  ]);
+  const [run] = runs;
+  return {
+    session,
+    run: run ? parseRun(run) : null,
+    messages: messages.map((message) => AGENT_MESSAGE_SCHEMA.parse(message)),
+  };
+}
+
+async function hasUncertainRun(transaction: DatabaseTransaction, sessionId: string) {
+  const [run] = await transaction
+    .select({ id: AGENT_RUNS.id })
+    .from(AGENT_RUNS)
+    .where(and(eq(AGENT_RUNS.sessionId, sessionId), eq(AGENT_RUNS.status, 'recovery_required')))
+    .limit(1);
+  return run !== undefined;
 }
 
 async function readRepeatedSubmission({
@@ -272,7 +248,7 @@ async function readRepeatedSubmission({
 }: {
   transaction: DatabaseTransaction;
   sessionId: string;
-  input: { readonly sourceEventId: string; readonly text: string };
+  input: MessageInput;
 }): Promise<MessageSubmission | null> {
   const [existing] = await transaction
     .select({ run: AGENT_RUNS })
@@ -288,6 +264,45 @@ async function readRepeatedSubmission({
   if (!existing) return null;
   if (existing.run.inputText !== input.text) return { status: 'conflict' };
   return { status: 'duplicate', run: parseRun(existing.run) };
+}
+
+async function recordSessionInput({
+  transaction,
+  sessionId,
+  configuration,
+  input,
+}: {
+  transaction: DatabaseTransaction;
+  sessionId: string;
+  configuration: AgentConfiguration;
+  input: MessageInput;
+}) {
+  // These records form one admission; publishing only a subset would lose or duplicate work.
+  const [event] = await transaction
+    .insert(INBOX_EVENTS)
+    .values({
+      scopeId: sessionId,
+      source: 'web',
+      sourceEventId: input.sourceEventId,
+      payload: input,
+    })
+    .returning({ id: INBOX_EVENTS.id });
+  if (!event) throw new Error(`Inbox submission for session ${sessionId} returned no row`);
+  const [run] = await transaction
+    .insert(AGENT_RUNS)
+    .values({ sessionId, inputId: event.id, inputText: input.text, configuration })
+    .returning();
+  if (!run) throw new Error(`Run admission for session ${sessionId} returned no row`);
+  await transaction.insert(AGENT_MESSAGES).values({
+    sessionId,
+    runId: run.id,
+    messageIndex: -1,
+    role: 'user',
+    state: 'completed',
+    text: input.text,
+  });
+  await advanceRevision(transaction, sessionId);
+  return parseRun(run);
 }
 
 async function advanceRevision(transaction: DatabaseTransaction, sessionId: string) {

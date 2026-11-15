@@ -1,4 +1,5 @@
 export {
+  type AuthenticatedApiEnv,
   type AuthenticatedRouter,
   createAuthenticatedRouter,
   type GetRequestUser,
