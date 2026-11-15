@@ -1,6 +1,8 @@
 import {
   AGENT_CONFIGURATION_SCHEMA,
   CREATE_SESSION_SCHEMA,
+  SESSION_HISTORY_QUERY_SCHEMA,
+  SESSION_LIST_QUERY_SCHEMA,
   SUBMIT_MESSAGE_SCHEMA,
 } from '@always-on/contracts/agents';
 import type { ModelCatalog } from '@always-on/contracts/models';
@@ -17,10 +19,14 @@ import {
 import type { Database } from '../infrastructure/database/index.js';
 import { SESSION_CURSOR_SCHEMA } from './events.js';
 import {
-  cancelSessionRun,
-  createAgentSession,
+  listAgentSessions,
+  readSessionHistory,
   readSessionRevision,
   readSessionSnapshot,
+} from './queries.js';
+import {
+  cancelSessionRun,
+  createAgentSession,
   submitSessionMessage,
   updateSessionConfiguration,
 } from './store.js';
@@ -33,6 +39,11 @@ const VALIDATE_SESSION = zValidator('param', SESSION_PATH_SCHEMA, handleValidati
 type SessionPath = z.infer<typeof SESSION_PATH_SCHEMA>;
 type SessionContext = AuthenticatedContext<{ param: SessionPath }>;
 type CreateContext = AuthenticatedContext<{ json: z.infer<typeof CREATE_SESSION_SCHEMA> }>;
+type ListContext = AuthenticatedContext<{ query: z.infer<typeof SESSION_LIST_QUERY_SCHEMA> }>;
+type HistoryContext = AuthenticatedContext<{
+  param: SessionPath;
+  query: z.infer<typeof SESSION_HISTORY_QUERY_SCHEMA>;
+}>;
 type ConfigureContext = AuthenticatedContext<{
   param: SessionPath;
   json: z.infer<typeof AGENT_CONFIGURATION_SCHEMA>;
@@ -58,8 +69,15 @@ export function createSessionRoutes({
   events,
 }: SessionRoutesOptions): AuthenticatedRouter {
   const routes = createAuthenticatedRouter(getUser);
+  routes.get('/', zValidator('query', SESSION_LIST_QUERY_SCHEMA, handleValidationResult), list);
   routes.post('/', zValidator('json', CREATE_SESSION_SCHEMA, handleValidationResult), create);
   routes.get('/:sessionId', VALIDATE_SESSION, read);
+  routes.get(
+    '/:sessionId/messages',
+    VALIDATE_SESSION,
+    zValidator('query', SESSION_HISTORY_QUERY_SCHEMA, handleValidationResult),
+    history,
+  );
   routes.patch(
     '/:sessionId/configuration',
     VALIDATE_SESSION,
@@ -80,6 +98,47 @@ export function createSessionRoutes({
   if (events) routes.get('/:sessionId/events', VALIDATE_SESSION, (ctx) => subscribe(ctx, events));
 
   return routes;
+
+  async function list(ctx: ListContext) {
+    const result = await listAgentSessions({
+      db,
+      userId: ctx.get('userId'),
+      query: ctx.req.valid('query'),
+    });
+    switch (result.status) {
+      case 'found':
+        return ctx.json(result.page);
+      case 'not_found':
+        return ctx.json({ code: result.status }, 404);
+      case 'invalid_cursor':
+        return ctx.json({ code: result.status }, 400);
+      default: {
+        const exhaustive: never = result;
+        throw new Error(`Unexpected Session list outcome ${JSON.stringify(exhaustive)}`);
+      }
+    }
+  }
+
+  async function history(ctx: HistoryContext) {
+    const result = await readSessionHistory({
+      db,
+      sessionId: ctx.req.valid('param').sessionId,
+      userId: ctx.get('userId'),
+      query: ctx.req.valid('query'),
+    });
+    switch (result.status) {
+      case 'found':
+        return ctx.json(result.page);
+      case 'not_found':
+        return ctx.json({ code: result.status }, 404);
+      case 'invalid_cursor':
+        return ctx.json({ code: result.status }, 400);
+      default: {
+        const exhaustive: never = result;
+        throw new Error(`Unexpected Session history outcome ${JSON.stringify(exhaustive)}`);
+      }
+    }
+  }
 
   async function create(ctx: CreateContext) {
     const { agentId } = ctx.req.valid('json');

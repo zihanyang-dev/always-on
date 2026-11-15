@@ -34,15 +34,29 @@ API 和 Worker 使用同一代码库，独立进程。Runner 是 Worker 内可�
 | POST | `/api/agents` | 创建 Agent：workspaceId、name、visibility、instructions、model、reasoningEffort |
 | GET | `/api/agents?workspaceId=...` | 当前用户可见的 Agent，最多 100 条 |
 | POST | `/api/sessions` | 从 agentId 创建私有会话 |
-| GET | `/api/sessions/:id` | 会话、当前或最近 Run、持久消息快照 |
+| GET | `/api/sessions?workspaceId=...` | 当前用户在指定 Workspace 的私有会话分页，含执行状态 |
+| GET | `/api/sessions/:id` | 会话、当前或最近 Run、最近 50 条持久消息及历史游标 |
+| GET | `/api/sessions/:id/messages` | 向前翻页读取更早的持久消息 |
 | PATCH | `/api/sessions/:id/configuration` | 修改 instructions、model、reasoningEffort；只影响随后提交的 Run |
 | POST | `/api/sessions/:id/messages` | 提交 sourceEventId、text，返回新建或重复的 Run |
 | POST | `/api/sessions/:id/runs/:runId/cancel` | 持久取消请求 |
 | GET | `/api/sessions/:id/events` | SSE，支持 Last-Event-ID |
 
-模型引用是 `{ provider, id }`，推理强度是模型目录返回的字符串。型号和强度由 Pi 的公开 API 提供，契约不复制厂商枚举。Agent 创建时先校验选择；每次输入在事务中保存 Session 当前配置，因此已排队和执行中的 Run 不受随后修改影响。尚无 Agent 更新/删除、Session 删除、历史分页或用户自带密钥管理接口。
+模型引用是 `{ provider, id }`，推理强度是模型目录返回的字符串。型号和强度由 Pi 的公开 API 提供，契约不复制厂商枚举。Agent 创建时先校验选择；每次输入在事务中保存 Session 当前配置，因此已排队和执行中的 Run 不受随后修改影响。尚无 Agent 更新/删除、Session 删除或用户自带密钥管理接口。
 
 Owner/Admin/Member 可以创建和使用 Agent，Viewer 只读可见定义。Agent 可见性可选 private 或 workspace，省略时默认 private；私有 Agent 仅创建者可用。Session 始终只对其创建者开放，并要求当前 Workspace 成员权限；能查看共享 Agent 不等于能查看别人的对话。工具执行和租约轮询重新检查当前权限；工具准入在权限查询的锁等待结束后核对有效租约，订阅也持续复核登录有效性与成员身份；登出、会话过期或撤销后，已有连接结束收流。
+
+## 会话列表与历史分页
+
+列表和历史接口接受 `limit`（默认 50，范围 1–100）与可选 `cursor`，响应分别为 `{ sessions, nextCursor }` 和 `{ messages, nextCursor }`。`nextCursor: null` 表示这一方向已无更多记录。非法参数返回 400；当前没有资源访问权返回 404；登录失效返回 401。游标格式正确但记录不属于当前用户、Workspace 或 Session，返回 `400 { code: "invalid_cursor" }`，不会透露该记录实际归属。
+
+列表按 `createdAt DESC, id DESC` 排序，游标对应上一页最后一个 Session。创建顺序固定，运行状态变化不移动会话；新创建的会话从首页读取。每项仅包含 `id`、`agentId`、`workspaceId`、`createdAt` 和 `run`，不返回指令、检查点或沙箱身份。`run` 优先选择 running、cancelling、recovery_required，随后才按创建时间和 ID 选择最近记录；没有 Run 时为 null。因此，较新的 queued 输入不会遮住当前执行或待核对的副作用。
+
+历史从最新一页开始，游标指向该页最早一条消息；下一页查询位置更早的消息。每页内部按 `position` 升序返回，接入方按消息 ID 合并后仍按 position 排序。新消息追加不会改变已发出的历史游标；默认窗口和 HTTP/SSE 快照均为最近 50 条。列表游标与消息游标是各自资源的 UUID，接入方应原样回传，不从时间戳或 position 自行构造。
+
+例如，先读取 `/api/sessions?workspaceId=W&limit=20` 找回私有会话，再读取 `/api/sessions/S` 获取当前状态和最近消息；需要更早内容时请求 `/api/sessions/S/messages?cursor=C&limit=50`，C 为快照或上一页的 nextCursor。重新登录不创建新 Session，继续通过原 Session 的消息接口提交输入。Viewer 可以读取自己的既有历史，但不能提交新输入；移出 Workspace 后列表、历史与快照均失去访问权。
+
+数据库使用 keyset 查询，列表索引覆盖 Workspace、创建者和创建顺序，Run 索引覆盖当前状态优先级。时间边界在 PG 内保持微秒精度，避免 JavaScript Date 的毫秒精度造成漏页；参考 [Drizzle 游标分页](https://orm.drizzle.team/docs/guides/cursor-based-pagination)、[Drizzle Lateral Join](https://orm.drizzle.team/docs/joins) 和 [node-postgres 时间类型](https://node-postgres.com/features/types)。历史使用已有 Session + position 唯一索引反向扫描，不新增通用分页框架。
 
 ## 输入与状态
 
@@ -76,9 +90,11 @@ Redis 保存约 2,000 条事件，最后一次写入后保留两小时。每个�
 
 update 包含 message、run 或 tool。草稿消息采用同 message.id 的累计文本替换，不是可重复拼接的 delta。客户端须按消息 ID 合并，completed/interrupted 不得被回放的 pending 覆盖；两份 pending 合并时保留较长的累计文本，PG 快照不能清空已观察到的草稿；Run 按 ID 合并，终态不得被旧 running 覆盖。工具进度只是短期观测。快照之后仍可能回放旧事件，因此这些规则是接口约束。
 
+snapshot/reset 的 messages 是最近窗口，不代表完整历史。合并时保留已加载的更早消息，以及窗口之外已观察到的草稿。nextCursor 描述这次窗口的向前分页边界：首次加载可用它开始读旧历史，已在翻页时保留自己的历史进度。如果断线后的新窗口与已有消息不重叠，应从新窗口的 nextCursor 向前补页，直到与已有历史衔接或读完；这次补页进度独立于更早历史的翻页进度。短期事件回放与分页可能包含同一条消息，仍按 ID 去重。分页仅影响产品展示，Pi 继续从原生会话检查点恢复模型上下文。
+
 消息与 Run 载荷中的 Session ID 必须匹配当前订阅，归属不符的事件不会交付，订阅报告 unavailable 后结束。工具进度只携带 Run ID，依赖发布者将其写入该 Run 所属 Session 的流。
 
-当前累计草稿方式便于补流，长文本的传输总量会增加，尚未做规模压测或消息分页。Redis 不是永久消息历史；PG 保存确认边界，未确认草稿可能在进程崩溃时丢失。access_revoked 结束订阅，unavailable 表示依赖失败，应重新连接并对账。
+当前累计草稿方式便于补流，长文本的传输总量会增加，尚未做规模压测。消息分页限制单次条数，不限制单条文本的字节数。Redis 不是永久消息历史；PG 保存确认边界，未确认草稿可能在进程崩溃时丢失。access_revoked 结束订阅，unavailable 表示依赖失败，应重新连接并对账。
 
 ## 配置、启动与验证
 
@@ -97,5 +113,7 @@ pnpm test:cloud
 ```
 
 普通 CI 不依赖真实模型或 E2B key。sandbox 测试启动真实 Firecracker VM，cloud 测试实际调用 DeepSeek 并贯通 HTTP、认证、PG、BullMQ、Pi、E2B 和 SSE，会产生模型用量。测试仅删除自己的数据与 VM。验证明细见 [执行链路审查](reviews/cloud-agent-2026-11-15.md) 和 [全仓代码审查](reviews/codebase-style-2026-11-15.md)。
+
+会话分页的真实 PG/Redis 验证位于 [sessions.test.ts](../tests/integration/sessions.test.ts)：覆盖相同时间戳及相邻微秒、分页期间新增记录、跨用户/空间/会话游标、执行与恢复状态优先级、HTTP/SSE 窗口对账、重新登录后继续执行和实时撤权。
 
 Router/长期 Task、Timers、跨会话 Memory 整理、审批、Outbox 和本地 Connector 留待后续实现。它们复用持久输入、执行所有权和工具边界，不引入第二套模型循环。

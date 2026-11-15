@@ -31,23 +31,34 @@ export const AGENTS = pgTable('agents', {
 });
 
 /** Conversations own their native checkpoint and the identity of their execution environment. */
-export const AGENT_SESSIONS = pgTable('agent_sessions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  agentId: uuid('agent_id')
-    .notNull()
-    .references(() => AGENTS.id, { onDelete: 'restrict' }),
-  workspaceId: text('workspace_id')
-    .notNull()
-    .references(() => WORKSPACES.id, { onDelete: 'restrict' }),
-  createdBy: text('created_by')
-    .notNull()
-    .references(() => AUTH_USERS.id, { onDelete: 'restrict' }),
-  configuration: jsonb('configuration').$type<unknown>().notNull(),
-  revision: integer('revision').notNull().default(0),
-  checkpoint: jsonb('execution_checkpoint').$type<unknown>(),
-  sandboxId: text('sandbox_id'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const AGENT_SESSIONS = pgTable(
+  'agent_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => AGENTS.id, { onDelete: 'restrict' }),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => WORKSPACES.id, { onDelete: 'restrict' }),
+    createdBy: text('created_by')
+      .notNull()
+      .references(() => AUTH_USERS.id, { onDelete: 'restrict' }),
+    configuration: jsonb('configuration').$type<unknown>().notNull(),
+    revision: integer('revision').notNull().default(0),
+    checkpoint: jsonb('execution_checkpoint').$type<unknown>(),
+    sandboxId: text('sandbox_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('agent_sessions_owner_created_idx').on(
+      table.workspaceId,
+      table.createdBy,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
 
 /** A queued row is also the durable dispatch intent; BullMQ only wakes a claimant. */
 export const AGENT_RUNS = pgTable(
@@ -74,6 +85,13 @@ export const AGENT_RUNS = pgTable(
   (table) => [
     index('agent_runs_pending_idx').on(table.status, table.createdAt),
     index('agent_runs_session_idx').on(table.sessionId, table.createdAt),
+    // Match the display order without sorting all earlier Runs for every listed Session.
+    index('agent_runs_session_display_idx').on(
+      table.sessionId,
+      sql`(${table.status} in ('running', 'cancelling', 'recovery_required'))`,
+      table.createdAt,
+      table.id,
+    ),
     // The database enforces one writer even when queue delivery and lease renewal race.
     uniqueIndex('agent_runs_session_writer')
       .on(table.sessionId)

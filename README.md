@@ -48,6 +48,7 @@ pnpm cli agents --json
 - 已实现：Workspace 后端、Owner/Admin/Member/Viewer、成员管理、邮箱邀请生命周期与跨空间授权，使用 Better Auth organization 的官方接口。并发与故障边界见[实现说明](docs/workspaces-and-authorization.md)。
 - 已实现：Session 消息校验、PG 原子接收与并发去重；真实 BullMQ Agent Worker 和带过期时间的 Redis Streams。
 - 已实现：云端 Agent/Session/Run、模型和推理强度选择、完整 Pi SDK、独立 E2B 沙箱、业务工具、原生会话接续、取消、PG 执行租约、Redis Streams/SSE 补流。M5 本机通过官方开源 E2B Embed + KVM 运行真实 Firecracker 沙箱；一期真实模型调用仅 DeepSeek。
+- 已实现：Workspace 内的私有会话列表、当前执行状态、稳定游标的消息历史分页，以及与 HTTP/SSE 最近消息窗口衔接；重新登录后可找回并继续原会话，当前成员权限约束所有读取。
 - 尚未实现：登录及 Workspace 前端、Router、长期 Task、设备连接、Timers、跨会话 Memory 整理、审批、Outbox 和对象存储。执行边界与验证范围见[云端 Agent 后端](docs/cloud-agent.md)。
 
 Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；后台扫描 PG 再唤醒 BullMQ。未配置云端执行能力时，Worker 直接退出，API 的认证和健康接口仍可使用。

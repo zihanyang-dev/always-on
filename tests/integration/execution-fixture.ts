@@ -31,6 +31,7 @@ interface ExecutionFixture extends AsyncDisposable {
   readonly db: WorkspaceFixture['db'];
   readonly userId: string;
   readonly workspaceId: string;
+  readonly agentId: string;
   readonly sessionId: string;
   readonly request: (input: ExecutionRequest) => Promise<Response>;
   readonly submit: (input?: MessageInput) => Promise<z.infer<typeof SUBMISSION_SCHEMA>>;
@@ -99,6 +100,7 @@ export async function openExecutionFixture(
     db: fixture.db,
     userId: actor.id,
     workspaceId: workspace.id,
+    agentId: agent.id,
     sessionId: session.id,
     request,
     submit,

@@ -1,15 +1,10 @@
-import {
-  AGENT_CONFIGURATION_SCHEMA,
-  AGENT_MESSAGE_SCHEMA,
-  AGENT_RUN_SCHEMA,
-  AGENT_SESSION_SCHEMA,
-  type AgentConfiguration,
-  type AgentRun,
-  type AgentSession,
-  type SessionSnapshot,
-  type SUBMIT_MESSAGE_SCHEMA,
+import type {
+  AgentConfiguration,
+  AgentRun,
+  AgentSession,
+  SUBMIT_MESSAGE_SCHEMA,
 } from '@always-on/contracts/agents';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { readUsableAgent } from '../agents/index.js';
 import {
@@ -19,14 +14,11 @@ import {
   type Database,
   type DatabaseTransaction,
   INBOX_EVENTS,
-  WORKSPACE_MEMBERS,
 } from '../infrastructure/database/index.js';
-import { hasAgentPermission } from '../workspaces/index.js';
+import { readSessionAccess, type SessionAccess } from './access.js';
+import { parseRun, parseSession } from './records.js';
 
-type SessionRow = typeof AGENT_SESSIONS.$inferSelect;
-type RunRow = typeof AGENT_RUNS.$inferSelect;
 type MessageInput = z.infer<typeof SUBMIT_MESSAGE_SCHEMA>;
-type SessionAccess = { db: Database; sessionId: string; userId: string };
 interface SessionConfigurationChange extends SessionAccess {
   configuration: AgentConfiguration;
 }
@@ -99,39 +91,6 @@ export async function updateSessionConfiguration({
   }
 }
 
-/** Reads a consistent durable display view while execution writes wait on the session lock. */
-export async function readSessionSnapshot({
-  db,
-  sessionId,
-  userId,
-}: SessionAccess): Promise<SessionSnapshot | null> {
-  return db.transaction(readSnapshot);
-
-  async function readSnapshot(transaction: DatabaseTransaction) {
-    // The shared Session lock keeps revision, messages and Run state consistent during this read.
-    const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
-    if (!session) return null;
-
-    return readSessionView(transaction, session);
-  }
-}
-
-/** Reads the current display revision only while the caller retains resource access. */
-export async function readSessionRevision({
-  db,
-  sessionId,
-  userId,
-}: SessionAccess): Promise<number | null> {
-  return db.transaction(readRevision);
-
-  async function readRevision(transaction: DatabaseTransaction) {
-    // Heartbeats repeat authorization; an earlier snapshot cannot grant permanent access.
-    const session = await readSessionAccess({ transaction, sessionId, userId, action: 'read' });
-
-    return session?.revision ?? null;
-  }
-}
-
 /** Commits Inbox input, queued Run and the user's display message in one transaction. */
 export async function submitSessionMessage({
   db,
@@ -199,76 +158,6 @@ export async function cancelSessionRun({
 
     return parseRun(updated);
   }
-}
-
-async function readSessionAccess({
-  transaction,
-  sessionId,
-  userId,
-  action,
-}: {
-  transaction: DatabaseTransaction;
-  sessionId: string;
-  userId: string;
-  action: 'read' | 'use';
-}) {
-  // Workspace membership never grants access to somebody else's private conversation.
-  const [session] = await transaction
-    .select()
-    .from(AGENT_SESSIONS)
-    .where(and(eq(AGENT_SESSIONS.id, sessionId), eq(AGENT_SESSIONS.createdBy, userId)))
-    .for(action === 'read' ? 'share' : 'update');
-  if (!session) return null;
-
-  // Hold membership through commit so removal cannot race an admitted change.
-  const [membership] = await transaction
-    .select({ roles: WORKSPACE_MEMBERS.role })
-    .from(WORKSPACE_MEMBERS)
-    .where(
-      and(
-        eq(WORKSPACE_MEMBERS.organizationId, session.workspaceId),
-        eq(WORKSPACE_MEMBERS.userId, userId),
-      ),
-    )
-    .for('share');
-  if (!membership || !hasAgentPermission({ roles: membership.roles, action })) return null;
-
-  // Reading history needs read access; starting work also needs the Agent's current authority.
-  if (action === 'use') {
-    const agent = await readUsableAgent({ transaction, agentId: session.agentId, userId });
-    if (!agent) return null;
-  }
-
-  // Keep storage references private and parse persisted configuration before another Run uses it.
-  return parseSession(session);
-}
-
-async function readSessionView(transaction: DatabaseTransaction, session: AgentSession) {
-  // Prefer an active Run over newer queued inputs so a reload still shows the work in progress.
-  const [runs, messages] = await Promise.all([
-    transaction
-      .select()
-      .from(AGENT_RUNS)
-      .where(eq(AGENT_RUNS.sessionId, session.id))
-      .orderBy(
-        desc(sql`${AGENT_RUNS.status} in ('running', 'cancelling')`),
-        desc(AGENT_RUNS.createdAt),
-        desc(AGENT_RUNS.id),
-      )
-      .limit(1),
-    transaction
-      .select()
-      .from(AGENT_MESSAGES)
-      .where(eq(AGENT_MESSAGES.sessionId, session.id))
-      .orderBy(AGENT_MESSAGES.position),
-  ]);
-  const [run] = runs;
-
-  return {
-    session,
-    run: run ? parseRun(run) : null,
-    messages: messages.map((message) => AGENT_MESSAGE_SCHEMA.parse(message)),
-  };
 }
 
 async function hasUncertainRun(transaction: DatabaseTransaction, sessionId: string) {
@@ -356,24 +245,4 @@ async function advanceRevision(transaction: DatabaseTransaction, sessionId: stri
     .update(AGENT_SESSIONS)
     .set({ revision: sql`${AGENT_SESSIONS.revision} + 1` })
     .where(eq(AGENT_SESSIONS.id, sessionId));
-}
-
-function parseSession(row: SessionRow) {
-  // Validate stored settings before another Run can use them; private storage fields are stripped.
-  const configuration = AGENT_CONFIGURATION_SCHEMA.parse(row.configuration);
-
-  return AGENT_SESSION_SCHEMA.parse({
-    ...row,
-    configuration,
-    createdAt: row.createdAt.toISOString(),
-  });
-}
-
-function parseRun(row: RunRow) {
-  return AGENT_RUN_SCHEMA.parse({
-    ...row,
-    createdAt: row.createdAt.toISOString(),
-    startedAt: row.startedAt?.toISOString(),
-    finishedAt: row.finishedAt?.toISOString(),
-  });
 }

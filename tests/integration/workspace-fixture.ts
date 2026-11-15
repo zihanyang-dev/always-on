@@ -47,6 +47,7 @@ const INVITATION_RESPONSE_SCHEMA = z.object({
 const MEMBER_RESPONSE_SCHEMA = z.object({ id: z.string(), userId: z.string(), role: z.string() });
 
 type WorkspaceActor = { id: string; email: string; headers: Headers; clientIp: string };
+type WorkspaceIdentity = Omit<WorkspaceActor, 'headers'>;
 type WorkerOptions = {
   createId?: () => string;
   redisUrl?: string;
@@ -73,6 +74,7 @@ export interface WorkspaceFixture extends AsyncDisposable {
   ) => Promise<AgentWorkerResource>;
   readonly request: (input: WorkspaceRequest) => Promise<Response>;
   readonly createActor: (label: string) => Promise<WorkspaceActor>;
+  readonly signIn: (actor: WorkspaceIdentity) => Promise<WorkspaceActor>;
   readonly createWorkspace: (input: {
     actor: WorkspaceActor;
     label: string;
@@ -163,6 +165,7 @@ export async function openWorkspaceFixture({
     startWorker,
     request,
     createActor,
+    signIn,
     createWorkspace,
     readEmail,
     expectErrors,
@@ -227,13 +230,17 @@ export async function openWorkspaceFixture({
     const verificationUrl = verification.text.match(/https?:\/\/\S+/)?.[0];
     assert.ok(verificationUrl, 'Expected a verification link in the test mailbox');
     expect((await request({ path: verificationUrl, method: 'GET', clientIp })).status).toBe(302);
+    return signIn({ ...user, clientIp });
+  }
+
+  async function signIn(actor: WorkspaceIdentity) {
     const signedIn = await request({
       path: '/api/auth/sign-in/email',
-      body: { email, password: PASSWORD },
-      clientIp,
+      body: { email: actor.email, password: PASSWORD },
+      clientIp: actor.clientIp,
     });
     expect(signedIn.status).toBe(200);
-    return { ...user, headers: convertSetCookieToCookie(signedIn.headers), clientIp };
+    return { ...actor, headers: convertSetCookieToCookie(signedIn.headers) };
   }
 
   async function createWorkspace({ actor, label }: { actor: WorkspaceActor; label: string }) {

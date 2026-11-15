@@ -1,0 +1,2 @@
+CREATE INDEX "agent_runs_session_display_idx" ON "agent_runs" USING btree ("session_id",("status" in ('running', 'cancelling', 'recovery_required')),"created_at","id");--> statement-breakpoint
+CREATE INDEX "agent_sessions_owner_created_idx" ON "agent_sessions" USING btree ("workspace_id","created_by","created_at","id");

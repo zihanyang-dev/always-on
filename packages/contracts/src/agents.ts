@@ -72,12 +72,40 @@ export type AgentMessage = {
   readonly position: number;
 };
 
-/** The authoritative display view for initial loading and stream resynchronization. */
-export type SessionSnapshot = {
+/** A bounded window of durable messages, ordered from oldest to newest within this page. */
+export type SessionMessagePage = {
+  readonly messages: readonly AgentMessage[];
+  readonly nextCursor: string | null;
+};
+
+/** The latest durable message window and execution state for stream resynchronization. */
+export interface SessionSnapshot extends SessionMessagePage {
   readonly session: AgentSession;
   readonly run: AgentRun | null;
-  readonly messages: readonly AgentMessage[];
+}
+
+/** Private conversation metadata without instructions, checkpoints or execution credentials. */
+export interface SessionSummary
+  extends Pick<AgentSession, 'id' | 'agentId' | 'workspaceId' | 'createdAt'> {
+  readonly run: AgentRun | null;
+}
+
+/** Conversations ordered by creation time and ID, newest first. */
+export type SessionListPage = {
+  readonly sessions: readonly SessionSummary[];
+  readonly nextCursor: string | null;
 };
+
+/** Parsed history selection; cursors identify an earlier message in the same Session. */
+export type SessionHistoryQuery = {
+  readonly limit: number;
+  readonly cursor?: string | undefined;
+};
+
+/** Parsed private conversation selection within one Workspace. */
+export interface SessionListQuery extends SessionHistoryQuery {
+  readonly workspaceId: string;
+}
 
 /** Full message replacements make replay idempotent across refreshes and reconnects. */
 export type SessionEvent =
@@ -104,6 +132,25 @@ const RUN_IDENTITY_SCHEMA = z.object({
   id: z.uuid(),
   sessionId: z.uuid(),
   createdAt: z.iso.datetime(),
+});
+
+/** Default window for HTTP history and every SSE snapshot or reset. */
+export const SESSION_PAGE_SIZE = 50;
+
+const MAX_PAGE_SIZE = 100;
+const PAGE_QUERY_FIELDS = {
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(SESSION_PAGE_SIZE),
+  cursor: z.uuid().optional(),
+};
+
+/** Bounds history reads and validates the opaque message cursor at the HTTP boundary. */
+export const SESSION_HISTORY_QUERY_SCHEMA: z.ZodType<SessionHistoryQuery> =
+  z.strictObject(PAGE_QUERY_FIELDS);
+
+/** Bounds conversation discovery and requires an explicit Workspace. */
+export const SESSION_LIST_QUERY_SCHEMA: z.ZodType<SessionListQuery> = z.strictObject({
+  ...PAGE_QUERY_FIELDS,
+  workspaceId: z.string().trim().min(1).max(200),
 });
 
 /** Validates execution settings at storage boundaries. */
@@ -175,11 +222,34 @@ export const AGENT_MESSAGE_SCHEMA: z.ZodType<AgentMessage> = z.object({
   position: z.number().int().positive(),
 });
 
+const MESSAGE_PAGE_FIELDS = {
+  messages: z.array(AGENT_MESSAGE_SCHEMA).max(MAX_PAGE_SIZE),
+  nextCursor: z.uuid().nullable(),
+};
+
 /** Validates a resynchronizable conversation view. */
 export const SESSION_SNAPSHOT_SCHEMA: z.ZodType<SessionSnapshot> = z.object({
   session: AGENT_SESSION_SCHEMA,
   run: AGENT_RUN_SCHEMA.nullable(),
-  messages: z.array(AGENT_MESSAGE_SCHEMA),
+  ...MESSAGE_PAGE_FIELDS,
+});
+
+/** Validates the message window and its cursor for loading older durable history. */
+export const SESSION_MESSAGE_PAGE_SCHEMA: z.ZodType<SessionMessagePage> =
+  z.object(MESSAGE_PAGE_FIELDS);
+
+const SESSION_SUMMARY_SCHEMA = z.object({
+  id: z.uuid(),
+  agentId: z.uuid(),
+  workspaceId: z.string(),
+  createdAt: z.iso.datetime(),
+  run: AGENT_RUN_SCHEMA.nullable(),
+});
+
+/** Validates the public conversation list without admitting private execution settings. */
+export const SESSION_LIST_PAGE_SCHEMA: z.ZodType<SessionListPage> = z.object({
+  sessions: z.array(SESSION_SUMMARY_SCHEMA).max(MAX_PAGE_SIZE),
+  nextCursor: z.uuid().nullable(),
 });
 
 /** Validates transient progress before it crosses Redis or HTTP boundaries. */

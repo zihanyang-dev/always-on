@@ -3,7 +3,7 @@ import { type SSEStreamingApi, streamSSE } from 'hono/streaming';
 import type { AuthenticatedApiEnv } from '../api/index.js';
 import type { Database } from '../infrastructure/database/index.js';
 import { openSessionEventReader } from './events.js';
-import { readSessionRevision, readSessionSnapshot } from './store.js';
+import { readSessionRevision, readSessionSnapshot } from './queries.js';
 
 /** Redis transport settings shared by subscriptions, separate from per-request identity. */
 export type SessionStreamConnection = {

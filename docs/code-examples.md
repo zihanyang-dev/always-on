@@ -16,11 +16,11 @@
 
 ## 数据库事务：入口拥有完整接收规则
 
-阅读 [sessions/store.ts](../apps/server/src/sessions/store.ts) 的 `submitSessionMessage`，连同 `readSessionAccess`、`readRepeatedSubmission` 和 `recordSessionInput`；调用处是 [sessions/routes.ts](../apps/server/src/sessions/routes.ts) 的 `submit`。
+阅读 [sessions/store.ts](../apps/server/src/sessions/store.ts) 的 `submitSessionMessage`、`readRepeatedSubmission` 和 `recordSessionInput`，连同 [sessions/access.ts](../apps/server/src/sessions/access.ts) 的 `readSessionAccess`；调用处是 [sessions/routes.ts](../apps/server/src/sessions/routes.ts) 的 `submit`。
 
 入口明确事务范围，具名事务操作按权限与锁、重复输入、恢复阻断、原子写入展开。重复输入先于恢复阻断判断，保证重试仍能返回原 Run。Inbox、Run、用户消息和展示版本一起提交，路由无需协调表和锁的顺序。
 
-辅助函数按完整职责提取；决定事务语义的检查顺序仍在主流程可见。新业务应根据自身一致性要求确定事务与锁范围。
+辅助函数按完整职责提取；决定事务语义的检查顺序仍在主流程可见。访问模块同时供列表、历史和写入事务使用，集中私有归属与当前成员权限。新业务应根据自身一致性要求确定事务与锁范围。
 
 验证参考：[agents.test.ts](../tests/integration/agents.test.ts) 的并发去重、跨 Session 来源隔离及配置快照用例。
 
