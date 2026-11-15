@@ -1,7 +1,9 @@
 # 仓库约定
 
-编写、修改或审查本仓库的 TypeScript / TSX 代码前，阅读并遵循 [TypeScript 代码规范](docs/typescript-style-guide.md)。
+编写、修改或审查本仓库的 TypeScript / TSX 代码前，阅读并遵循 [TypeScript 代码规范](docs/typescript-style-guide.md)，按职责参考[代码范例](docs/code-examples.md)。
 
 保持仓库干净：及时删除冗余代码、废弃路径和临时补丁，避免后续 Agent 沿用并不断累积复杂度。
 
 修复错误应定位根因，在正确的职责位置解决；不要通过吞错、绕过校验或无依据的兜底掩盖问题。
+
+交付前分别验收正确性与可读性，同时审查调用处和实现，并运行与改动相关的检查。

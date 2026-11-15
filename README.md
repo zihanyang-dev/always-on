@@ -57,6 +57,7 @@ Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；�
 - [架构总览](docs/architecture.md)
 - [目录与配置管理](docs/project-structure.md)
 - [TypeScript 规范](docs/typescript-style-guide.md)
+- [代码范例索引](docs/code-examples.md)
 - [后端认证接入](docs/authentication.md)
 - [工作空间与授权方案](docs/workspaces-and-authorization.md)
 - [LobeHub 团队权限与 TS 授权调研](docs/research/teams-and-authorization.md)
