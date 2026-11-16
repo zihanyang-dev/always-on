@@ -26,11 +26,13 @@
 
 ## 有状态资源：执行编排与所有权维护各有归属
 
-阅读 [tasks/execute.ts](../apps/server/src/tasks/execute.ts) 的 `executeQueuedRun` 和 `RunControl`；调用处是 [tasks/worker.ts](../apps/server/src/tasks/worker.ts) 的 `processRun`。
+阅读 [tasks/execute.ts](../apps/server/src/tasks/execute.ts) 的 `executeQueuedRun` 和 `RunControl`；调用处是 [tasks/worker.ts](../apps/server/src/tasks/worker.ts) 的 `processJob` 和 `executeRun`。
 
 入口按领取、执行、收尾、最终提交展开。`RunControl` 集中维护租约轮询、取消信号和轮询失败，调用者只在执行结束后读取一次失败结果。词法作用域明确租约维护的结束位置：执行函数完成 SDK/沙箱收尾后，才停止续约并判断最终提交。
 
 使用 class 的理由是关联状态与生命周期需要共同维护。无状态转换使用函数；小范围状态也可以由闭包维护。
+
+Worker 关闭时先等待已接受的 SDK、沙箱和文件操作结束，再关闭队列连接。Redis 通知可能因断线而挂起，应由传输关闭期限处理，不加入资源释放的等待集合。
 
 验证参考：[execution.test.ts](../tests/integration/execution.test.ts) 的真实 Worker 执行与显式取消用例，以及 [agents.test.ts](../tests/integration/agents.test.ts) 的 owner 过期隔离和取消竞态用例。
 

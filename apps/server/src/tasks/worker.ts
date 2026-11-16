@@ -15,7 +15,6 @@ import {
 } from '../sessions/index.js';
 import { executeQueuedRun, type RunExecutor } from './execute.js';
 import { listQueuedRuns, type RunClaim, recoverExpiredRuns } from './ownership.js';
-import type { RunCompletion } from './store.js';
 
 const AGENT_QUEUE_NAME = 'agent-runs';
 const RUN_JOB_SCHEMA = z.strictObject({ runId: z.uuid() });
@@ -122,9 +121,7 @@ export async function openAgentWorker({
     await deleteSessionEvents({ redis: progress.client, prefix, sessionId: resources.sessionId });
   }
 
-  async function trackResourceWork<TResult extends RunCompletion | void>(
-    task: Promise<TResult>,
-  ): Promise<TResult> {
+  async function trackResourceWork<TResult>(task: Promise<TResult>): Promise<TResult> {
     const settled = Promise.withResolvers<void>();
     resourceWork.add(settled.promise);
     try {

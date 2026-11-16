@@ -14,6 +14,7 @@ import {
   type Database,
   type DatabaseTransaction,
   WORKSPACE_MEMBERS,
+  WORKSPACE_TABLES,
 } from '../infrastructure/database/index.js';
 import { hasAgentPermission } from '../workspaces/index.js';
 
@@ -130,6 +131,14 @@ export async function createAgent({
   return db.transaction(create);
 
   async function create(transaction: DatabaseTransaction) {
+    // Match SDK deletion's Workspace → membership order before inserting a dependent Agent.
+    const [workspace] = await transaction
+      .select({ id: WORKSPACE_TABLES.organization.id })
+      .from(WORKSPACE_TABLES.organization)
+      .where(eq(WORKSPACE_TABLES.organization.id, input.workspaceId))
+      .for('share');
+    if (!workspace) return null;
+
     const roles = await readMembership({ transaction, workspaceId: input.workspaceId, userId });
     if (!roles || !hasAgentPermission({ roles, action: 'create' })) return null;
 

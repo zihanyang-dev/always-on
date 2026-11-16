@@ -37,7 +37,7 @@ pnpm cli agents --json
 
 集成测试需要已迁移的 PG 和 Redis。浏览器测试自行启动 API 与 Web，使用独立测试进程；运行前释放本项目的 `3001` 和 `5173` 端口。CLI 命令使用已构建产物，修改后运行 `pnpm build`。
 
-`pnpm check` 使用 Biome 和 TypeScript，检查循环依赖时包含纯类型导入。生产代码的环境变量只能在配置入口读取；浏览器源码禁止导入 Node 运行时模块和 Agent 执行包。默认导出仅对框架配置文件开放。职责划分、注释准确性和函数可读性仍需人工审查，详见[本轮整理记录](docs/reviews/codebase-style-2026-11-15.md)。
+`pnpm check` 使用 Biome 和 TypeScript，检查循环依赖时包含纯类型导入。生产代码的环境变量只能在配置入口读取；浏览器源码禁止导入 Node 运行时模块和 Agent 执行包。默认导出仅对框架配置文件开放。职责划分、注释准确性和函数可读性仍需人工审查，详见[本轮审查记录](docs/reviews/codebase-style-2026-11-16.md)。
 
 E2B 已弃用的 NotFoundError 命名导入由 Biome 拦截，沙箱与文件缺失使用对应异常类型；这项定向规则不替代 SDK 升级时的类型、文档和行为核对。
 

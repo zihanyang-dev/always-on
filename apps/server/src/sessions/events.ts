@@ -93,8 +93,8 @@ export async function openSessionEventReader({
     cursor !== '0-0' &&
     (!firstId ||
       !lastId ||
-      compareCursors(cursor, firstId) < 0 ||
-      compareCursors(cursor, lastId) > 0);
+      compareCursors({ cursor, boundary: firstId }) < 0 ||
+      compareCursors({ cursor, boundary: lastId }) > 0);
   let position = shouldReset ? '0-0' : cursor;
   const resources = startup.move();
 
@@ -143,12 +143,12 @@ function getStreamKey({ prefix, sessionId }: { prefix: string; sessionId: string
   return `${prefix}:session:${sessionId}:events`;
 }
 
-function compareCursors(first: string, second: string) {
-  const left = first
+function compareCursors({ cursor, boundary }: { cursor: string; boundary: string }) {
+  const left = cursor
     .split('-')
     .map((part) => part.padStart(20, '0'))
     .join('-');
-  const right = second
+  const right = boundary
     .split('-')
     .map((part) => part.padStart(20, '0'))
     .join('-');

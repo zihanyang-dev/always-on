@@ -145,7 +145,7 @@ Agent 生命周期已加入实际 statements：Member 的 update 只能结合创
 
 Worker 依据持久任务中的执行主体，在执行前使用当前成员事实和同一套公开权限定义判定；不模拟用户 Cookie，不因请求来自内部就放行。发起者退出后的任务暂停、设备撤权、长连接与事件重放的处理随相应功能落地。
 
-后续删除工作空间还需通过任务停止与沙箱释放流程，数据库级联不承担停止外部计算的职责。当前不预建通用 ACL 总表、策略解释器或完整审计系统。
+当前有 Agent 的 Workspace 删除返回 409，需先回收其 Session，再删除空 Agent 定义。创建 Agent 在同一事务内先对 Workspace 取共享行锁，再读取并锁定成员权限，与 SDK 的删除锁顺序一致：创建先完成时删除返回业务冲突，删除先完成时创建返回资源不可用。数据库级联不承担停止外部计算的职责。当前不预建通用 ACL 总表、策略解释器或完整审计系统。
 
 ## 接入验证与证据范围
 
@@ -199,6 +199,5 @@ apps/server/src/infrastructure/database/
 
 需要业务成员解析入口时再在 workspaces 中增加相应实现。纯规则测试相邻；第三方 SDK 行为测试在 tests/sdk，跨应用真实链路在 tests/integration，不机械地为每个 SDK 方法新建函数或文件。
 
-本阶段已完成稳定版核对、schema/迁移、官方接口接入和真实 PG/Redis 验收。下一步可接 Agent 的最小业务链路；前端与真实邀请投递在允许接前端后一起完成。
-
+Workspace 后端已完成 schema/迁移、官方接口接入和真实 PG/Redis 验收，并已接入 Agent、Session 和云端执行链路。登录与 Workspace 前端尚未实现；当前邀请测试使用内存邮箱，真实邀请投递尚未联调。
 本阶段不需要新的密钥，继续使用现有 BETTER_AUTH_SECRET、BETTER_AUTH_URL、RESEND_API_KEY 与 EMAIL_FROM。角色和成员是产品事实，部署 env 不授予业务身份。

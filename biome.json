@@ -66,6 +66,7 @@
         "useExportType": "error"
       },
       "suspicious": {
+        "noConfusingVoidType": "error",
         "noExplicitAny": "error",
         "noTsIgnore": "error",
         "noImportCycles": {

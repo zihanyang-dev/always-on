@@ -511,6 +511,62 @@ it('safely finishes an expired cleanup attempt even when its old callback later 
   ).toBe(404);
 });
 
+it('keeps a newer cleanup attempt intact when the expired attempt later fails', async () => {
+  await using fixture = await openExecutionFixture();
+  await requestDeletion(fixture);
+  const firstEntered = Promise.withResolvers<void>();
+  const secondEntered = Promise.withResolvers<void>();
+  const releaseFirst = Promise.withResolvers<void>();
+  const releaseSecond = Promise.withResolvers<void>();
+  const failure = new Error('Expired provider request failed');
+  const first = processSessionDeletion({
+    db: fixture.db,
+    sessionId: fixture.sessionId,
+    deleteResources: async () => {
+      firstEntered.resolve();
+      await releaseFirst.promise;
+      throw failure;
+    },
+  });
+  const failed = expect(first).rejects.toMatchObject({ cause: failure });
+  let second: Promise<void> | undefined;
+
+  try {
+    await firstEntered.promise;
+    await makeCleanupDue(fixture);
+    second = processSessionDeletion({
+      db: fixture.db,
+      sessionId: fixture.sessionId,
+      deleteResources: async () => {
+        secondEntered.resolve();
+        await releaseSecond.promise;
+      },
+    });
+    await secondEntered.promise;
+    const before = await readProgress();
+    expect(before.attempts).toBe(2);
+    expect(before.errorCode).toBeNull();
+
+    // A late failure must not shorten the live attempt's deadline or replace its progress.
+    releaseFirst.resolve();
+    await failed;
+    expect(await readProgress()).toEqual(before);
+  } finally {
+    releaseFirst.resolve();
+    releaseSecond.resolve();
+    await Promise.all([failed, second]);
+  }
+
+  async function readProgress() {
+    const response = await fixture.request({
+      path: `/api/sessions/${fixture.sessionId}/deletion`,
+      method: 'GET',
+    });
+
+    return SESSION_DELETION_SCHEMA.parse(await response.json());
+  }
+});
+
 it('declines resource startup after cancellation wins a database claim wait and leaves work immediately retryable', async () => {
   await using fixture = await openExecutionFixture();
   await requestDeletion(fixture);

@@ -8,7 +8,9 @@ import {
   AGENT_SESSIONS,
   AGENT_TOOL_CALLS,
   AGENTS,
+  type Database,
   WORKSPACE_MEMBERS,
+  WORKSPACE_TABLES,
 } from '../../apps/server/src/infrastructure/database/index.js';
 import {
   cancelSessionRun,
@@ -72,6 +74,111 @@ it('keeps private Agents private and gives viewers no execution capability', asy
       },
     }),
   ).toBeNull();
+});
+
+it('serializes Agent creation with Workspace deletion before taking membership locks', async () => {
+  await using fixture = await openWorkspaceFixture();
+  const owner = await fixture.createActor('creating-owner');
+  const workspace = await fixture.createWorkspace({ actor: owner, label: 'creating' });
+  const locked = Promise.withResolvers<number>();
+  const release = Promise.withResolvers<void>();
+  const blocking = fixture.db.transaction(async (transaction) => {
+    const [member] = await transaction
+      .select({ pid: sql<number>`pg_backend_pid()` })
+      .from(WORKSPACE_MEMBERS)
+      .where(eq(WORKSPACE_MEMBERS.organizationId, workspace.id))
+      .for('update');
+    assert.ok(member);
+    locked.resolve(member.pid);
+    await release.promise;
+  });
+  const blockerId = await locked.promise;
+  const creating = Promise.allSettled([
+    createAgent({
+      db: fixture.db,
+      userId: owner.id,
+      input: {
+        ...CONFIGURATION,
+        workspaceId: workspace.id,
+        name: 'Concurrent Agent',
+        visibility: 'private',
+      },
+    }),
+  ]);
+  const [creationWait] = await Promise.allSettled([
+    waitForBlockedMutations({ db: fixture.db, blockerId, count: 1 }),
+  ]);
+  const deleting = fixture.request({
+    actor: owner,
+    path: '/api/auth/organization/delete',
+    body: { organizationId: workspace.id },
+  });
+  const [deletionWait] = await Promise.allSettled([
+    waitForBlockedMutations({ db: fixture.db, blockerId, count: 2 }),
+  ]);
+
+  // Join every request before asserting, including when a lock probe or the mutation fails.
+  release.resolve();
+  const [, creation, deletion] = await Promise.all([blocking, creating, deleting]);
+  expect(creationWait.status).toBe('fulfilled');
+  expect(deletionWait.status).toBe('fulfilled');
+  const [created] = creation;
+  assert.ok(created?.status === 'fulfilled' && created.value);
+  expect(deletion.status).toBe(409);
+  const retained = await fixture.db
+    .select()
+    .from(WORKSPACE_TABLES.organization)
+    .where(eq(WORKSPACE_TABLES.organization.id, workspace.id));
+  expect(retained).toHaveLength(1);
+});
+
+it('declines Agent creation when a concurrent Workspace deletion wins admission', async () => {
+  await using fixture = await openWorkspaceFixture();
+  const owner = await fixture.createActor('deleting-owner');
+  const workspace = await fixture.createWorkspace({ actor: owner, label: 'deleting' });
+  const locked = Promise.withResolvers<number>();
+  const release = Promise.withResolvers<void>();
+  const blocking = fixture.db.transaction(async (transaction) => {
+    const [workspaceRow] = await transaction
+      .select({ pid: sql<number>`pg_backend_pid()` })
+      .from(WORKSPACE_TABLES.organization)
+      .where(eq(WORKSPACE_TABLES.organization.id, workspace.id))
+      .for('update');
+    assert.ok(workspaceRow);
+    locked.resolve(workspaceRow.pid);
+    await release.promise;
+  });
+  const blockerId = await locked.promise;
+  const deleting = fixture.request({
+    actor: owner,
+    path: '/api/auth/organization/delete',
+    body: { organizationId: workspace.id },
+  });
+  const [deletionWait] = await Promise.allSettled([
+    waitForBlockedMutations({ db: fixture.db, blockerId, count: 1 }),
+  ]);
+  const creating = Promise.allSettled([
+    createAgent({
+      db: fixture.db,
+      userId: owner.id,
+      input: {
+        ...CONFIGURATION,
+        workspaceId: workspace.id,
+        name: 'Rejected Agent',
+        visibility: 'private',
+      },
+    }),
+  ]);
+  const [creationWait] = await Promise.allSettled([
+    waitForBlockedMutations({ db: fixture.db, blockerId, count: 2 }),
+  ]);
+
+  release.resolve();
+  const [, deletion, creation] = await Promise.all([blocking, deleting, creating]);
+  expect(deletionWait.status).toBe('fulfilled');
+  expect(creationWait.status).toBe('fulfilled');
+  expect(deletion.status).toBe(200);
+  expect(creation).toEqual([{ status: 'fulfilled', value: null }]);
 });
 
 it('deduplicates concurrent input and rejects a changed payload with the same identity', async () => {
@@ -306,7 +413,9 @@ it('rechecks the execution lease after waiting for an Agent permission lock', as
   const blockerId = await locked.promise;
   const starting = startRunTool({ db: fixture.db, claim, tool: { id: toolId, name: 'bash' } });
 
-  const [waiting] = await Promise.allSettled([vi.waitFor(assertBlocked)]);
+  const [waiting] = await Promise.allSettled([
+    waitForBlockedMutations({ db: fixture.db, blockerId, count: 1 }),
+  ]);
   // Release the lock and join both requests before any assertion can leave fixture-owned work behind.
   release.resolve();
   const [blocker, started] = await Promise.allSettled([locking, starting]);
@@ -321,13 +430,6 @@ it('rechecks the execution lease after waiting for an Agent permission lock', as
     .from(AGENT_TOOL_CALLS)
     .where(eq(AGENT_TOOL_CALLS.id, toolId));
   expect(receipts).toEqual([]);
-
-  async function assertBlocked() {
-    const blocked = await fixture.db.execute(sql`
-      select pid from pg_stat_activity where ${blockerId} = any(pg_blocking_pids(pid))
-    `);
-    expect(blocked.rows).toHaveLength(1);
-  }
 });
 
 it('persists queued cancellation without invoking a Runner', async () => {
@@ -362,6 +464,30 @@ it('keeps a committed cancellation when the model finishes before the next owner
   });
   expect(completed.status).toBe('cancelled');
 });
+
+async function waitForBlockedMutations({
+  db,
+  blockerId,
+  count,
+}: {
+  db: Database;
+  blockerId: number;
+  count: number;
+}) {
+  await vi.waitFor(async () => {
+    // Follow only this fixture's wait chain, including locks held by another waiting mutation.
+    const blocked = await db.execute(sql`
+      with recursive waiting as (
+        select pid from pg_stat_activity where ${blockerId} = any(pg_blocking_pids(pid))
+        union
+        select activity.pid from pg_stat_activity activity
+        join waiting on waiting.pid = any(pg_blocking_pids(activity.pid))
+      )
+      select pid from waiting
+    `);
+    expect(blocked.rows).toHaveLength(count);
+  });
+}
 
 async function openSessionFixture() {
   await using startup = new AsyncDisposableStack();

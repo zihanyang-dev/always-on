@@ -115,7 +115,7 @@ export async function processSessionDeletion({
 }): Promise<void> {
   if (signal?.aborted) return;
 
-  // A short claim limits duplicate cleanup. Its expiry needs no owner transfer: deletion is idempotent.
+  // Resource deletion is idempotent, but only the latest attempt may reschedule its retry.
   const [session] = await db
     .update(AGENT_SESSIONS)
     .set({
@@ -129,7 +129,7 @@ export async function processSessionDeletion({
         lte(AGENT_SESSIONS.cleanupAfter, sql`clock_timestamp()`),
       ),
     )
-    .returning();
+    .returning({ sandboxId: AGENT_SESSIONS.sandboxId, attempts: AGENT_SESSIONS.cleanupAttempts });
   if (!session) return;
 
   // A claim can wait on PostgreSQL while its Worker stops. Do not start new resource I/O afterward.
@@ -137,7 +137,13 @@ export async function processSessionDeletion({
     await db
       .update(AGENT_SESSIONS)
       .set({ cleanupAfter: sql`clock_timestamp()` })
-      .where(and(eq(AGENT_SESSIONS.id, sessionId), eq(AGENT_SESSIONS.status, 'deleting')));
+      .where(
+        and(
+          eq(AGENT_SESSIONS.id, sessionId),
+          eq(AGENT_SESSIONS.status, 'deleting'),
+          eq(AGENT_SESSIONS.cleanupAttempts, session.attempts),
+        ),
+      );
     return;
   }
 
@@ -146,7 +152,7 @@ export async function processSessionDeletion({
     await deleteResources({ sessionId, sandboxId: session.sandboxId });
     await finalizeSessionDeletion(db, sessionId);
   } catch (error) {
-    await recordCleanupFailure({ db, sessionId, attempts: session.cleanupAttempts, error });
+    await recordCleanupFailure({ db, sessionId, attempts: session.attempts, error });
   }
 }
 
@@ -188,7 +194,13 @@ async function recordCleanupFailure({
         // A stable code supports translated clients; provider diagnostics remain in logs.
         cleanupError: 'resource_cleanup_failed',
       })
-      .where(and(eq(AGENT_SESSIONS.id, sessionId), eq(AGENT_SESSIONS.status, 'deleting')));
+      .where(
+        and(
+          eq(AGENT_SESSIONS.id, sessionId),
+          eq(AGENT_SESSIONS.status, 'deleting'),
+          eq(AGENT_SESSIONS.cleanupAttempts, attempts),
+        ),
+      );
   } catch (recordingError) {
     throw new AggregateError(
       [failure, recordingError],

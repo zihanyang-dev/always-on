@@ -35,7 +35,7 @@ export function createWorkspacePlugin({
   });
 
   async function beforeDeleteOrganization({ organization }: { organization: { id: string } }) {
-    // The SDK holds its organization lock; the FK also protects concurrent resource creation.
+    // The SDK holds the organization lock across this check and its cascading delete.
     if (!canDeleteWorkspace || (await canDeleteWorkspace(organization.id))) return;
 
     throw new APIError('CONFLICT', {
