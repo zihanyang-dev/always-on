@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { addAbortListener, once } from 'node:events';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { promisify } from 'node:util';
-import { SESSION_EVENT_SCHEMA, SESSION_SNAPSHOT_SCHEMA } from '@always-on/contracts/agents';
+import {
+  SESSION_DELETION_SCHEMA,
+  SESSION_EVENT_SCHEMA,
+  SESSION_SNAPSHOT_SCHEMA,
+} from '@always-on/contracts/agents';
 import { and, eq, sql } from 'drizzle-orm';
 import { expect, it, vi } from 'vitest';
 import { parseWorkerEnv } from '../../apps/server/src/bootstrap/env.js';
@@ -342,6 +346,51 @@ it('releases the real Agent Worker after its queue transport disappears', async 
     await release.promise;
     return { status: 'cancelled' as const, checkpoint: null };
   }
+});
+
+it('retains deletion progress when cleanup finishes after its Redis transport disappears', async () => {
+  await using fixture = await openExecutionFixture();
+  await using relay = await openRedisRelay(parseWorkerEnv(process.env).REDIS_URL);
+  const requested = await fixture.request({
+    path: `/api/sessions/${fixture.sessionId}`,
+    method: 'DELETE',
+  });
+  expect(requested.status).toBe(202);
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const errors: Error[] = [];
+  await using worker = await fixture.startWorker(
+    async () => {
+      throw new Error('Deletion must not invoke a model');
+    },
+    {
+      redisUrl: relay.url,
+      onError: (error) => errors.push(error),
+      deleteSessionResources: async () => {
+        started.resolve();
+        await release.promise;
+      },
+    },
+  );
+
+  try {
+    await started.promise;
+    await relay[Symbol.asyncDispose]();
+  } finally {
+    release.resolve();
+  }
+
+  await expect(worker[Symbol.asyncDispose]()).rejects.toMatchObject({
+    message: 'Agent Worker shutdown failed',
+  });
+  const response = await fixture.request({
+    path: `/api/sessions/${fixture.sessionId}/deletion`,
+    method: 'GET',
+  });
+  const progress = SESSION_DELETION_SCHEMA.parse(await response.json());
+  expect(progress.attempts).toBe(1);
+  expect(progress.errorCode).toBe('resource_cleanup_failed');
+  expect(errors.length).toBeGreaterThan(0);
 });
 
 async function waitForCancellation(signal: AbortSignal) {

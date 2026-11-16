@@ -38,7 +38,7 @@ export type SessionHistoryResult =
 export async function listAgentSessions({
   db,
   userId,
-  query: { workspaceId, cursor, limit },
+  query: { workspaceId, cursor, limit, status },
 }: {
   db: Database;
   userId: string;
@@ -80,6 +80,8 @@ export async function listAgentSessions({
         agentId: AGENT_SESSIONS.agentId,
         workspaceId: AGENT_SESSIONS.workspaceId,
         createdAt: AGENT_SESSIONS.createdAt,
+        title: AGENT_SESSIONS.title,
+        status: AGENT_SESSIONS.status,
         run: runFields,
       })
       .from(AGENT_SESSIONS)
@@ -88,6 +90,7 @@ export async function listAgentSessions({
         and(
           eq(AGENT_SESSIONS.workspaceId, workspaceId),
           eq(AGENT_SESSIONS.createdBy, userId),
+          eq(AGENT_SESSIONS.status, status),
           before,
         ),
       )

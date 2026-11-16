@@ -5,12 +5,21 @@ import { Queue, Worker } from 'bullmq';
 import { z } from 'zod';
 import type { Database } from '../infrastructure/database/index.js';
 import { openRedis } from '../infrastructure/redis/index.js';
-import { publishSessionEvent } from '../sessions/index.js';
+import {
+  type DeleteSessionResources,
+  deleteSessionEvents,
+  listSessionDeletions,
+  processSessionDeletion,
+  publishSessionEvent,
+  type SessionResources,
+} from '../sessions/index.js';
 import { executeQueuedRun, type RunExecutor } from './execute.js';
 import { listQueuedRuns, type RunClaim, recoverExpiredRuns } from './ownership.js';
+import type { RunCompletion } from './store.js';
 
-const RUN_QUEUE_NAME = 'agent-runs';
+const AGENT_QUEUE_NAME = 'agent-runs';
 const RUN_JOB_SCHEMA = z.strictObject({ runId: z.uuid() });
+const DELETION_JOB_SCHEMA = z.strictObject({ sessionId: z.uuid() });
 const QUEUE_DRAIN_TIMEOUT_MS = 5_000;
 
 /** A running queue consumer; infrastructure failure wakes its owning process. */
@@ -27,6 +36,7 @@ export async function openAgentWorker({
   execute,
   createId,
   onError,
+  deleteSessionResources,
 }: {
   db: Database;
   redisUrl: string;
@@ -35,23 +45,24 @@ export async function openAgentWorker({
   execute: RunExecutor;
   createId: () => string;
   onError: (error: Error) => void;
+  deleteSessionResources?: DeleteSessionResources;
 }): Promise<AgentWorkerResource> {
-  const executions = new Set<Promise<void>>();
+  const resourceWork = new Set<Promise<void>>();
   await using startup = new AsyncDisposableStack();
   const consumer = startup.use(openRedis({ url: redisUrl, role: 'worker', onError }));
   const progress = startup.use(openRedis({ url: redisUrl, role: 'api', onError }));
 
-  const queue = new Queue(RUN_QUEUE_NAME, {
+  const queue = new Queue(AGENT_QUEUE_NAME, {
     connection: progress.client,
     prefix,
-    // Failed wake-ups must not retain the Run ID and block durable queued rows from redispatch.
-    // Claimed or uncertain Runs are excluded by PostgreSQL, independently of queue retention.
+    // Wake-up IDs must be removable so durable Run and cleanup requests can be redispatched.
+    // PostgreSQL independently governs execution ownership and the next cleanup attempt.
     defaultJobOptions: { attempts: 1, removeOnComplete: true, removeOnFail: true },
   });
   startup.defer(() => queue.close());
   queue.on('error', onError);
 
-  const worker = new Worker<unknown>(RUN_QUEUE_NAME, processRun, {
+  const worker = new Worker<unknown>(AGENT_QUEUE_NAME, processJob, {
     connection: consumer.client,
     prefix,
     concurrency,
@@ -67,50 +78,84 @@ export async function openAgentWorker({
   const resources = startup.move();
   const stopping = new AbortController();
   const fatal = Promise.withResolvers<Error>();
-  const dispatching = dispatchRuns();
+  const dispatching = dispatchJobs();
   const consuming = consumeRuns();
 
   return { failure: fatal.promise, [Symbol.asyncDispose]: dispose };
 
-  async function processRun(job: { name: string; data: unknown }) {
-    if (job.name !== 'execute') throw new Error(`Unsupported Agent queue job ${job.name}`);
+  async function processJob(job: { name: string; data: unknown }) {
+    if (stopping.signal.aborted) return;
 
-    const { runId } = RUN_JOB_SCHEMA.parse(job.data);
-    await executeQueuedRun({
-      db,
-      runId,
-      ownerToken: createId(),
-      execute: executeRun,
-      signal: stopping.signal,
-      onError,
-      publish: (input) => publishSessionEvent({ redis: progress.client, prefix, ...input }),
-    });
-  }
-
-  async function executeRun(claim: RunClaim, context: ExecutionContext) {
-    // An already-fetched queue callback can reach this boundary after shutdown has begun.
-    if (stopping.signal.aborted) return { status: 'cancelled' as const, checkpoint: null };
-
-    const settled = Promise.withResolvers<void>();
-    executions.add(settled.promise);
-    try {
-      return await execute(claim, context);
-    } finally {
-      // This barrier tracks lifetime only; failures still propagate to BullMQ's failed handler.
-      settled.resolve();
-      executions.delete(settled.promise);
+    switch (job.name) {
+      case 'execute': {
+        const { runId } = RUN_JOB_SCHEMA.parse(job.data);
+        return executeQueuedRun({
+          db,
+          runId,
+          ownerToken: createId(),
+          execute: executeRun,
+          signal: stopping.signal,
+          onError,
+          publish: (input) => publishSessionEvent({ redis: progress.client, prefix, ...input }),
+        });
+      }
+      case 'delete-session': {
+        const { sessionId } = DELETION_JOB_SCHEMA.parse(job.data);
+        return processSessionDeletion({ db, sessionId, deleteResources, signal: stopping.signal });
+      }
+      default:
+        throw new Error(`Unsupported Agent queue job ${job.name}`);
     }
   }
 
-  async function dispatchRuns() {
+  async function executeRun(claim: RunClaim, context: ExecutionContext) {
+    // Admission can finish after shutdown starts; release its claim through normal cancellation.
+    if (stopping.signal.aborted) return { status: 'cancelled' as const, checkpoint: null };
+
+    return trackResourceWork(execute(claim, context));
+  }
+
+  async function deleteResources(resources: SessionResources) {
+    if (!deleteSessionResources) throw new Error('Session resource deletion is not configured');
+
+    await trackResourceWork(deleteSessionResources(resources));
+    await deleteSessionEvents({ redis: progress.client, prefix, sessionId: resources.sessionId });
+  }
+
+  async function trackResourceWork<TResult extends RunCompletion | void>(
+    task: Promise<TResult>,
+  ): Promise<TResult> {
+    const settled = Promise.withResolvers<void>();
+    resourceWork.add(settled.promise);
+    try {
+      return await task;
+    } finally {
+      // Resource work must finish before the deadline; Redis acknowledgements use the bounded drain.
+      settled.resolve();
+      resourceWork.delete(settled.promise);
+    }
+  }
+
+  async function dispatchJobs() {
     try {
       while (!stopping.signal.aborted) {
         await recoverExpiredRuns(db);
-        const runIds = await listQueuedRuns(db);
-        if (runIds.length > 0)
-          await queue.addBulk(
-            runIds.map((runId) => ({ name: 'execute', data: { runId }, opts: { jobId: runId } })),
-          );
+        const [runIds, sessionIds] = await Promise.all([
+          listQueuedRuns(db),
+          deleteSessionResources ? listSessionDeletions(db) : [],
+        ]);
+        const executions = runIds.map((runId) => ({
+          name: 'execute',
+          data: { runId },
+          opts: { jobId: runId },
+        }));
+        const deletions = sessionIds.map((sessionId) => ({
+          name: 'delete-session',
+          data: { sessionId },
+          opts: { jobId: `delete-session-${sessionId}` },
+        }));
+        const jobs = [...executions, ...deletions];
+        if (jobs.length > 0) await queue.addBulk(jobs);
 
         await waitInterval(1_000, undefined, { signal: stopping.signal });
       }
@@ -122,7 +167,7 @@ export async function openAgentWorker({
       )
         return;
 
-      // Pending Run rows survive; let the process supervisor restart failed infrastructure.
+      // Durable work survives; let the process supervisor restart failed infrastructure.
       fatal.resolve(new Error('Agent dispatch loop failed', { cause: error }));
     }
   }
@@ -140,7 +185,7 @@ export async function openAgentWorker({
   async function closeWorker() {
     // Stop accepting work, then join SDK/sandbox cleanup before starting the queue I/O deadline.
     await worker.pause(true);
-    await Promise.all(executions);
+    await Promise.all(resourceWork);
     const deadline = AbortSignal.timeout(QUEUE_DRAIN_TIMEOUT_MS);
     using _deadline = addAbortListener(deadline, disconnectQueue);
     const [closed] = await Promise.allSettled([worker.close()]);

@@ -1,6 +1,6 @@
 # 云端 Agent 后端
 
-日期：2026-11-15。已实现首条后端链路，无新增前端。真实模型验证仅使用 DeepSeek；第二供应商使用本地受控响应验证配置和 SDK 适配，不表示实际调用过该供应商。
+日期：2026-11-16。已实现云端执行、会话分页及生命周期后端，无新增前端。真实模型验证仅使用 DeepSeek；第二供应商使用本地受控响应验证配置和 SDK 适配，不表示实际调用过该供应商。
 
 ## 执行路径
 
@@ -32,19 +32,40 @@ API 和 Worker 使用同一代码库，独立进程。Runner 是 Worker 内可�
 | --- | --- | --- |
 | GET | `/api/agents/models` | 启用供应商的模型、推理强度和部署默认模型 |
 | POST | `/api/agents` | 创建 Agent：workspaceId、name、visibility、instructions、model、reasoningEffort |
+| PATCH | `/api/agents/:id` | 部分编辑名称、默认配置、可见性和 active/disabled |
+| DELETE | `/api/agents/:id` | 删除无任何 Session 的定义；仍有会话返回 409 has_sessions |
 | GET | `/api/agents?workspaceId=...` | 当前用户可见的 Agent，最多 100 条 |
 | POST | `/api/sessions` | 从 agentId 创建私有会话 |
 | GET | `/api/sessions?workspaceId=...` | 当前用户在指定 Workspace 的私有会话分页，含执行状态 |
 | GET | `/api/sessions/:id` | 会话、当前或最近 Run、最近 50 条持久消息及历史游标 |
+| PATCH | `/api/sessions/:id` | 部分修改 title、active/archived；title=null 清除自定义名称 |
+| DELETE | `/api/sessions/:id` | 接受不可撤销的异步删除，返回 202 与清理进度 |
+| GET | `/api/sessions/:id/deletion` | 读取删除进度；完成或没有访问权返回 404 |
 | GET | `/api/sessions/:id/messages` | 向前翻页读取更早的持久消息 |
 | PATCH | `/api/sessions/:id/configuration` | 修改 instructions、model、reasoningEffort；只影响随后提交的 Run |
 | POST | `/api/sessions/:id/messages` | 提交 sourceEventId、text，返回新建或重复的 Run |
 | POST | `/api/sessions/:id/runs/:runId/cancel` | 持久取消请求 |
 | GET | `/api/sessions/:id/events` | SSE，支持 Last-Event-ID |
 
-模型引用是 `{ provider, id }`，推理强度是模型目录返回的字符串。型号和强度由 Pi 的公开 API 提供，契约不复制厂商枚举。Agent 创建时先校验选择；每次输入在事务中保存 Session 当前配置，因此已排队和执行中的 Run 不受随后修改影响。尚无 Agent 更新/删除、Session 删除或用户自带密钥管理接口。
+模型引用是 `{ provider, id }`，推理强度是模型目录返回的字符串。型号和强度由 Pi 的公开 API 提供，契约不复制厂商枚举。Agent 创建时先校验选择；部分更新模型/强度时在锁内合并当前值再校验。名称、可见性和停用不要求旧模型仍在目录中。每次输入在事务中保存 Session 当前配置，因此已排队和执行中的 Run 不受随后修改影响。用户自带密钥管理仍属后续功能。
 
 Owner/Admin/Member 可以创建和使用 Agent，Viewer 只读可见定义。Agent 可见性可选 private 或 workspace，省略时默认 private；私有 Agent 仅创建者可用。Session 始终只对其创建者开放，并要求当前 Workspace 成员权限；能查看共享 Agent 不等于能查看别人的对话。工具执行和租约轮询重新检查当前权限；工具准入在权限查询的锁等待结束后核对有效租约，订阅也持续复核登录有效性与成员身份；登出、会话过期或撤销后，已有连接结束收流。
+
+## 编辑、归档与资源回收
+
+Agent 创建者在当前 Workspace 有写权限时可编辑自己的定义；Owner/Admin 还可管理 Workspace 可见定义。角色能力由 Better Auth statements 提供，应用继续检查所有者与可见性；管理员不能因此读取私人 Agent 或别人的 Session。部分编辑不能修改 workspaceId、createdBy，省略字段保持原值。默认指令/模型/强度修改只影响之后新建的 Session；已有会话可用 configuration 接口显式修改。
+
+disabled 保留可见的定义和历史，拒绝新 Session、新输入和模型配置准入。已排队输入在领取时取消，运行中执行在每秒续约或工具准入时观察停用并合作取消；外部效果不能撤销，未知结果仍进入 recovery_required。停用/启用表示当前可用性，明确停止某个 Run 仍使用持久 cancel 接口。停用后，本人仍可在当前 Workspace 写权限下命名、归档、取消和删除会话。
+
+Session 默认 title=null、status=active；归档不取消已有 Run，也不删除检查点。列表默认查询 active，`status=archived` 查询归档记录，两种列表都包含 title/status。提交真正的新输入时，恢复 active 与 Inbox/Run/用户消息原子提交；重复输入仅返回原 Run，不修改归档状态。新创建记录的时间顺序仍固定，游标记录已经物理删除时返回 invalid_cursor，需要从首页重新读取。
+
+删除先锁 Session，与消息准入及执行领取使用同一锁。存在 queued/running/cancelling 时返回 `409 { code: "busy" }`，需先取消并等待收尾；存在 recovery_required 时返回同名 409，需先人工核对，不提供 force 参数绕过。接受后返回 `{ sessionId, status: "deleting", requestedAt, attempts, nextAttemptAt, errorCode }`，重复 DELETE 返回当前进度。errorCode 为 null 或 resource_cleanup_failed，供界面翻译；原始 SDK 诊断不进入响应。普通读取、写入和 SSE 立即失去访问；GET deletion 仍要求本人身份和当前成员读权限。删除请求不可恢复成活跃会话。
+
+PG 保存删除请求及重试进度。现有 Worker 扫描到期请求，用独立的 delete-session Job 唤醒，短更新将尝试数加一并保留 60 秒的重试间隔；远端 I/O 不持有事务。先通过 E2B 控制面结束绑定 VM，再移除 Session 专属目录中的所有 Run/attempt，清理事件，最后事务删除 Session 及级联 Run/消息/工具记录与对应 Inbox。E2B 已不存在、目录已不存在与重复最终提交都可正常完成。API/Worker 必须使用同一部署连接和持久会话卷。
+
+失败保留资源身份和稳定错误码，退避从 2 秒增长至最多 5 分钟；原始诊断留在日志。进程中断后到期可重试，重复释放针对同一不可复用身份，不引入业务副作用重跑。Worker 停止先等待 SDK、沙箱及文件操作，再启动队列传输的 5 秒退出期限；正常关闭等待最终提交，传输故障保留待清理进度并明确报告失败。已被成员授权接受的删除会继续处理，后续撤权不会把它变成孤立资源；进度读取仍立即受当前权限约束。Redis 是有期限的传输窗口，迟到通知不能恢复已删除的产品会话或访问权。
+
+Agent 仍有任何 Session（包括归档和正在清理）时不能删除，防止级联影响别人的对话；会话回收后可删除空定义，再通过官方 organization 接口删除空 Workspace。没有新增回收站、恢复删除、自动处理未知工具效果或会话存续期间的旧检查点淘汰。设计与官方依据见 [ADR-0003](adr/0003-agent-session-lifecycle.md) 和 [生命周期调研](research/agent-session-lifecycle.md)。
 
 ## 会话列表与历史分页
 
@@ -82,7 +103,7 @@ read/write/edit/bash 使用 Pi 官方工厂，启用工具的文件和命令操�
 
 工具写入、建目录和命令在执行前持久记录意图，得到确认后提交回执。确认丢失时保留 pending，进入 recovery_required；首版没有自动副作用对账、恢复操作 API 或 exactly-once 保证，需运维核对原生历史、沙箱和工具记录。纯读工具不记副作用意图。
 
-尚无删除 Agent/Session 并销毁其资源的流程，因此有 Agent 的 Workspace 返回 409 禁止删除，数据库外键也阻止级联清除资源归属。开发测试显式清理自己创建的记录和 VM。暂停沙箱及检查点的留存、容量和回收需在开放删除或生产长期运营前完善。
+有 Agent 的 Workspace 仍返回 409，数据库外键阻止级联清除资源归属。先按生命周期接口回收会话、删除空 Agent，再删除 Workspace。开发测试只清理自己创建的记录和 VM；会话存续期间的留存容量与旧检查点淘汰仍需在生产长期运营前完善。
 
 ## SSE 对账规则
 
@@ -115,5 +136,7 @@ pnpm test:cloud
 普通 CI 不依赖真实模型或 E2B key。sandbox 测试启动真实 Firecracker VM，cloud 测试实际调用 DeepSeek 并贯通 HTTP、认证、PG、BullMQ、Pi、E2B 和 SSE，会产生模型用量。测试仅删除自己的数据与 VM。验证明细见 [执行链路审查](reviews/cloud-agent-2026-11-15.md) 和 [全仓代码审查](reviews/codebase-style-2026-11-15.md)。
 
 会话分页的真实 PG/Redis 验证位于 [sessions.test.ts](../tests/integration/sessions.test.ts)：覆盖相同时间戳及相邻微秒、分页期间新增记录、跨用户/空间/会话游标、执行与恢复状态优先级、HTTP/SSE 窗口对账、重新登录后继续执行和实时撤权。
+
+生命周期验证位于 [lifecycle.test.ts](../tests/integration/lifecycle.test.ts)：覆盖当前角色/可见性、模型合并、配置快照、停用、归档、删除与输入竞态、忙碌/未知状态、失败重试、过期清理尝试和 Worker 重启。存储单测验证路径隔离、重复删除与符号链接；cloud 测试另验证真实暂停 E2B、所有 attempt 文件及重复释放，不额外调用模型来生成测试文件。
 
 Router/长期 Task、Timers、跨会话 Memory 整理、审批、Outbox 和本地 Connector 留待后续实现。它们复用持久输入、执行所有权和工具边界，不引入第二套模型循环。

@@ -1,4 +1,5 @@
 export {
+  deleteE2bSandbox,
   type E2bConnection,
   openE2bWorkspace,
   SANDBOX_WORKING_DIRECTORY,

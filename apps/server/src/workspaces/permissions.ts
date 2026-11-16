@@ -7,7 +7,8 @@ import {
   ownerAc,
 } from 'better-auth/plugins/organization/access';
 
-const AGENT_ACTIONS = ['read', 'create', 'use'] as const;
+const AGENT_ACTIONS = ['read', 'create', 'use', 'update', 'manage'] as const;
+const MEMBER_AGENT_ACTIONS = ['read', 'create', 'use', 'update'] as const;
 
 /** Adds application resources while retaining the SDK's organization management statements. */
 export const WORKSPACE_ACCESS_CONTROL = createAccessControl({
@@ -19,7 +20,7 @@ export const WORKSPACE_ACCESS_CONTROL = createAccessControl({
 export const WORKSPACE_ROLES = {
   owner: WORKSPACE_ACCESS_CONTROL.newRole({ ...ownerAc.statements, agent: AGENT_ACTIONS }),
   admin: WORKSPACE_ACCESS_CONTROL.newRole({ ...adminAc.statements, agent: AGENT_ACTIONS }),
-  member: WORKSPACE_ACCESS_CONTROL.newRole({ ...memberAc.statements, agent: AGENT_ACTIONS }),
+  member: WORKSPACE_ACCESS_CONTROL.newRole({ ...memberAc.statements, agent: MEMBER_AGENT_ACTIONS }),
   viewer: WORKSPACE_ACCESS_CONTROL.newRole({ agent: ['read'] }),
 } satisfies NonNullable<OrganizationOptions['roles']>;
 

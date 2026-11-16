@@ -7,11 +7,14 @@ import { MODEL_CATALOG_SCHEMA, type ModelCatalog } from '@always-on/contracts/mo
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { Database } from '../infrastructure/database/index.js';
+import { deleteSessionFiles, getRunDirectory } from '../infrastructure/session-storage/index.js';
 import {
+  deleteE2bSandbox,
   openE2bWorkspace,
   SANDBOX_WORKING_DIRECTORY,
   SandboxNotFoundError,
 } from '../sandbox/index.js';
+import type { SessionResources } from '../sessions/index.js';
 import {
   authorizeRunTool,
   bindRunSandbox,
@@ -22,6 +25,10 @@ import {
 } from '../tasks/index.js';
 import { readWorkspaceSummary } from '../workspaces/index.js';
 import type { CloudAgentConfiguration } from './agent-config.js';
+
+interface CloudSessionDeletion extends SessionResources {
+  readonly config: Pick<CloudAgentConfiguration, 'directory' | 'sandbox'>;
+}
 
 /** Reads provider capabilities through Pi and exposes only enabled public model metadata. */
 export async function loadAgentModelCatalog(
@@ -85,13 +92,12 @@ export async function executeCloudRun({
   let missingSandbox: SandboxNotFoundError | undefined;
   const workspace = createDeferredWorkspace(getWorkspace);
   const session = {
-    directory: join(
-      config.directory,
-      'sessions',
-      claim.run.sessionId,
-      claim.run.id,
-      claim.ownerToken,
-    ),
+    directory: getRunDirectory({
+      directory: config.directory,
+      sessionId: claim.run.sessionId,
+      runId: claim.run.id,
+      ownerToken: claim.ownerToken,
+    }),
     connection,
     modelId: claim.configuration.model.id,
     reasoningEffort: claim.configuration.reasoningEffort,
@@ -192,6 +198,17 @@ export async function executeCloudRun({
     onError(interruption.error);
     cancellation.abort(interruption.error);
   }
+}
+
+/** Releases cloud-owned resources after the Session has durably left every execution path. */
+export async function deleteCloudSessionResources({
+  config,
+  sessionId,
+  sandboxId,
+}: CloudSessionDeletion): Promise<void> {
+  // Keep native evidence if the bound environment could not yet be released.
+  if (sandboxId) await deleteE2bSandbox({ connection: config.sandbox, sandboxId });
+  await deleteSessionFiles({ directory: config.directory, sessionId });
 }
 
 function createDeferredWorkspace(

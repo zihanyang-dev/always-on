@@ -4,6 +4,7 @@ import {
   SESSION_HISTORY_QUERY_SCHEMA,
   SESSION_LIST_QUERY_SCHEMA,
   SUBMIT_MESSAGE_SCHEMA,
+  UPDATE_SESSION_SCHEMA,
 } from '@always-on/contracts/agents';
 import type { ModelCatalog } from '@always-on/contracts/models';
 import { zValidator } from '@hono/zod-validator';
@@ -17,6 +18,7 @@ import {
   handleValidationResult,
 } from '../api/index.js';
 import type { Database } from '../infrastructure/database/index.js';
+import { readSessionDeletion, requestSessionDeletion } from './deletion.js';
 import { SESSION_CURSOR_SCHEMA } from './events.js';
 import {
   listAgentSessions,
@@ -28,6 +30,7 @@ import {
   cancelSessionRun,
   createAgentSession,
   submitSessionMessage,
+  updateAgentSession,
   updateSessionConfiguration,
 } from './store.js';
 import { type SessionStreamConnection, streamSessionEvents } from './stream.js';
@@ -39,6 +42,10 @@ const VALIDATE_SESSION = zValidator('param', SESSION_PATH_SCHEMA, handleValidati
 type SessionPath = z.infer<typeof SESSION_PATH_SCHEMA>;
 type SessionContext = AuthenticatedContext<{ param: SessionPath }>;
 type CreateContext = AuthenticatedContext<{ json: z.infer<typeof CREATE_SESSION_SCHEMA> }>;
+type MetadataContext = AuthenticatedContext<{
+  param: SessionPath;
+  json: z.infer<typeof UPDATE_SESSION_SCHEMA>;
+}>;
 type ListContext = AuthenticatedContext<{ query: z.infer<typeof SESSION_LIST_QUERY_SCHEMA> }>;
 type HistoryContext = AuthenticatedContext<{
   param: SessionPath;
@@ -72,6 +79,14 @@ export function createSessionRoutes({
   routes.get('/', zValidator('query', SESSION_LIST_QUERY_SCHEMA, handleValidationResult), list);
   routes.post('/', zValidator('json', CREATE_SESSION_SCHEMA, handleValidationResult), create);
   routes.get('/:sessionId', VALIDATE_SESSION, read);
+  routes.patch(
+    '/:sessionId',
+    VALIDATE_SESSION,
+    zValidator('json', UPDATE_SESSION_SCHEMA, handleValidationResult),
+    updateMetadata,
+  );
+  routes.delete('/:sessionId', VALIDATE_SESSION, remove);
+  routes.get('/:sessionId/deletion', VALIDATE_SESSION, readDeletion);
   routes.get(
     '/:sessionId/messages',
     VALIDATE_SESSION,
@@ -171,6 +186,50 @@ export function createSessionRoutes({
     if (!session) return ctx.json({ code: 'not_found' }, 404);
 
     return ctx.json(session);
+  }
+
+  async function updateMetadata(ctx: MetadataContext) {
+    const session = await updateAgentSession({
+      db,
+      sessionId: ctx.req.valid('param').sessionId,
+      userId: ctx.get('userId'),
+      patch: ctx.req.valid('json'),
+    });
+    if (!session) return ctx.json({ code: 'not_found' }, 404);
+
+    return ctx.json(session);
+  }
+
+  async function remove(ctx: SessionContext) {
+    const result = await requestSessionDeletion({
+      db,
+      sessionId: ctx.req.valid('param').sessionId,
+      userId: ctx.get('userId'),
+    });
+    switch (result.status) {
+      case 'accepted':
+        return ctx.json(result.deletion, 202);
+      case 'not_found':
+        return ctx.json({ code: result.status }, 404);
+      case 'busy':
+      case 'recovery_required':
+        return ctx.json({ code: result.status }, 409);
+      default: {
+        const exhaustive: never = result;
+        throw new Error(`Unexpected Session deletion outcome ${JSON.stringify(exhaustive)}`);
+      }
+    }
+  }
+
+  async function readDeletion(ctx: SessionContext) {
+    const deletion = await readSessionDeletion({
+      db,
+      sessionId: ctx.req.valid('param').sessionId,
+      userId: ctx.get('userId'),
+    });
+    if (!deletion) return ctx.json({ code: 'not_found' }, 404);
+
+    return ctx.json(deletion);
   }
 
   async function submit(ctx: SubmitContext) {

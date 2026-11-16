@@ -2,7 +2,7 @@
 
 日期：2026-11-15。
 
-状态：云端首条后端链路已经实现并通过真实 DeepSeek + E2B 验证。PostgreSQL 保存持久事实，Redis + BullMQ 唤醒执行，Redis Streams/SSE 交付短期进度；完整 Pi SDK、可信 Runner、用户代码 E2B Sandbox 和原生会话存储分别管理。详细接口、恢复限制和测试见 [云端 Agent 后端](cloud-agent.md)。
+状态：云端执行、会话分页和生命周期后端已实现，并通过真实 DeepSeek + E2B 验证。PostgreSQL 保存持久事实，Redis + BullMQ 唤醒执行与资源清理，Redis Streams/SSE 交付短期进度；完整 Pi SDK、可信 Runner、用户代码 E2B Sandbox 和原生会话存储分别管理。详细接口、恢复限制和测试见 [云端 Agent 后端](cloud-agent.md)。
 
 工程骨架、用户认证、Workspace/RBAC 与云端 Agent 执行已落地，无新增业务前端。本文同时保留 Router、Timers、Memory、Outbox 等后续职责，未实现部分在下文明确标记；不能将目标架构视为已交付能力。
 
@@ -86,7 +86,7 @@ Router 完成一次判断就结束本次执行，不持续等待 Worker。它使
 
 当前云端路径是可信 Runner 运行 Pi SDK，read/write/edit/bash 通过公开工具 operations 委派给 Sandbox provider；未接入远端的工具不启用，不回退到平台本机。模型凭据、平台管理凭据和 Pi 会话目录不进入用户 Sandbox，也不将 Runner 环境变量整体传给远端命令。
 
-需要文件的长期任务绑定明确的执行目录及环境身份，后续 Run 复用它。实例生命周期与任务状态分开。实际工作文件与依赖由执行环境的卷或快照保存，最终产物的对象存储接入后续实现；Pi 原生会话单独持久化，当前依赖 API/Worker 可共同访问的持久目录，尚无对象存储同步和旧检查点回收。PG 保存产品事实、输入、配置、消息投影与存储引用；不能只存一个引用就声称原始会话或工作文件已经可恢复。
+需要文件的长期任务绑定明确的执行目录及环境身份，后续 Run 复用它。实例生命周期与任务状态分开。实际工作文件与依赖由执行环境的卷或快照保存，最终产物的对象存储接入后续实现；Pi 原生会话单独持久化，当前依赖 API/Worker 可共同访问的持久目录，尚无对象存储同步和会话存续期间的旧检查点淘汰。删除通过 PG 意图和现有 Worker 回收专属 VM/会话目录，确认后移除持久记录，见 [ADR-0003](adr/0003-agent-session-lifecycle.md)。PG 保存产品事实、输入、配置、消息投影与存储引用；不能只存一个引用就声称原始会话或工作文件已经可恢复。
 
 后续本地 CLI 使用用户电脑的原生环境、已有 Agent 安装和本地会话，接入 Codex、Claude Code、Pi 等真实支持的协议。其执行器恢复与能力逐个验证；当前不预制 Connector 或多执行器框架，也不让本地接入改变云端 Pi 的部署边界。
 

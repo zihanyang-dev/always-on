@@ -26,7 +26,10 @@ import {
 } from '../../apps/server/src/infrastructure/database/index.js';
 import type { EmailMessage } from '../../apps/server/src/infrastructure/email/index.js';
 import { openRedis } from '../../apps/server/src/infrastructure/redis/index.js';
-import { publishSessionEvent } from '../../apps/server/src/sessions/index.js';
+import {
+  type DeleteSessionResources,
+  publishSessionEvent,
+} from '../../apps/server/src/sessions/index.js';
 import {
   type AgentWorkerResource,
   openAgentWorker,
@@ -52,13 +55,14 @@ type WorkerOptions = {
   createId?: () => string;
   redisUrl?: string;
   onError?: (error: Error) => void;
+  deleteSessionResources?: DeleteSessionResources;
 };
 /** One HTTP request through the application fixture, with optional real login credentials. */
 export type WorkspaceRequest = {
   path: string;
   actor?: WorkspaceActor;
   body?: unknown;
-  method?: 'GET' | 'POST' | 'PATCH';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   headers?: Readonly<Record<string, string>>;
   signal?: AbortSignal;
   origin?: string;
@@ -338,6 +342,7 @@ export async function openWorkspaceFixture({
       createId = randomUUID,
       redisUrl = ENV.REDIS_URL,
       onError: reportWorkerError = onError,
+      deleteSessionResources,
     }: WorkerOptions = {},
   ) {
     return openAgentWorker({
@@ -348,6 +353,7 @@ export async function openWorkspaceFixture({
       execute,
       createId,
       onError: reportWorkerError,
+      ...(deleteSessionResources ? { deleteSessionResources } : {}),
     });
   }
 

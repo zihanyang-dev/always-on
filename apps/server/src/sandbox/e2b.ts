@@ -1,5 +1,9 @@
 import type { ExecutionWorkspace, WorkspaceFileWrite } from '@always-on/agent-runtime/workspace';
-import { NotFoundError, Sandbox, type SandboxConnectOpts } from 'e2b';
+import {
+  SandboxNotFoundError as E2bSandboxNotFoundError,
+  Sandbox,
+  type SandboxConnectOpts,
+} from 'e2b';
 import { executeSandboxCommand } from './command.js';
 
 /** The provider's working directory, independent of Runner-side SDK storage. */
@@ -35,6 +39,23 @@ export class SandboxNotFoundError extends Error {
     super(`Bound sandbox ${sandboxId} no longer exists`, options);
     this.sandboxId = sandboxId;
   }
+}
+
+/** Ends a running or paused binding; an already missing VM is a completed cleanup. */
+export async function deleteE2bSandbox({
+  connection,
+  sandboxId,
+  signal,
+}: {
+  connection: E2bConnection;
+  sandboxId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  await Sandbox.kill(sandboxId, {
+    ...connection,
+    requestTimeoutMs: 30_000,
+    ...(signal ? { signal } : {}),
+  });
 }
 
 /** Creates or reconnects the explicitly bound VM without replacing missing session state. */
@@ -134,7 +155,8 @@ async function connectBoundSandbox({
   try {
     return await Sandbox.connect(sandboxId, options);
   } catch (error) {
-    if (error instanceof NotFoundError) throw new SandboxNotFoundError(sandboxId, { cause: error });
+    if (error instanceof E2bSandboxNotFoundError)
+      throw new SandboxNotFoundError(sandboxId, { cause: error });
 
     throw error;
   }

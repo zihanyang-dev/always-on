@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SESSION_EVENT_SCHEMA } from '@always-on/contracts/agents';
 import { eq } from 'drizzle-orm';
-import { Sandbox } from 'e2b';
+import { Sandbox, SandboxNotFoundError } from 'e2b';
 import { expect, it, vi } from 'vitest';
 import {
+  deleteCloudSessionResources,
   executeCloudRun,
   loadAgentModelCatalog,
 } from '../../apps/server/src/bootstrap/cloud-agent.js';
@@ -16,8 +17,100 @@ import {
   AGENT_SESSIONS,
   AGENT_TOOL_CALLS,
 } from '../../apps/server/src/infrastructure/database/index.js';
+import { getRunDirectory } from '../../apps/server/src/infrastructure/session-storage/index.js';
+import { openE2bWorkspace } from '../../apps/server/src/sandbox/index.js';
 import type { RunExecutor } from '../../apps/server/src/tasks/index.js';
 import { openExecutionFixture } from './execution-fixture.js';
+
+it('deletes a paused E2B binding and every owned attempt through the real deletion Worker', async () => {
+  const environment = parseWorkerEnv(process.env);
+  assert.ok(environment.cloudAgent);
+  await using resources = new AsyncDisposableStack();
+  const directory = await mkdtemp(join(tmpdir(), 'always-on-cloud-deletion-'));
+  resources.defer(() => rm(directory, { recursive: true, force: true }));
+  const config = { ...environment.cloudAgent, directory };
+  const fixture = resources.use(await openExecutionFixture());
+  const sandbox = await openE2bWorkspace({
+    connection: config.sandbox,
+    binding: {
+      kind: 'new',
+      idempotencyKey: fixture.sessionId,
+      metadata: {
+        application: 'always-on',
+        sessionId: fixture.sessionId,
+        workspaceId: fixture.workspaceId,
+      },
+    },
+  });
+  const sandboxId = sandbox.sandboxId;
+  resources.defer(removeSandbox);
+  await sandbox[Symbol.asyncDispose]();
+  expect((await Sandbox.getInfo(sandboxId, config.sandbox)).state).toBe('paused');
+  await fixture.db
+    .update(AGENT_SESSIONS)
+    .set({ sandboxId })
+    .where(eq(AGENT_SESSIONS.id, fixture.sessionId));
+
+  const first = getRunDirectory({
+    directory,
+    sessionId: fixture.sessionId,
+    runId: randomUUID(),
+    ownerToken: randomUUID(),
+  });
+  const second = getRunDirectory({
+    directory,
+    sessionId: fixture.sessionId,
+    runId: randomUUID(),
+    ownerToken: randomUUID(),
+  });
+  const other = getRunDirectory({
+    directory,
+    sessionId: randomUUID(),
+    runId: randomUUID(),
+    ownerToken: randomUUID(),
+  });
+  const attempts = [first, second, other];
+  await Promise.all(attempts.map((path) => mkdir(path, { recursive: true })));
+  await Promise.all(
+    attempts.map((path) => writeFile(join(path, 'session.jsonl'), 'Opaque SDK bytes')),
+  );
+  expect(
+    (await fixture.request({ path: `/api/sessions/${fixture.sessionId}`, method: 'DELETE' }))
+      .status,
+  ).toBe(202);
+
+  await using _worker = await fixture.startWorker(
+    async () => {
+      throw new Error('Deletion must not run a model');
+    },
+    {
+      deleteSessionResources: (identities) =>
+        deleteCloudSessionResources({ config, ...identities }),
+    },
+  );
+  await vi.waitFor(
+    async () => {
+      const progress = await fixture.request({
+        path: `/api/sessions/${fixture.sessionId}/deletion`,
+        method: 'GET',
+      });
+      expect(progress.status).toBe(404);
+    },
+    { timeout: 10_000 },
+  );
+
+  await expect(Sandbox.getInfo(sandboxId, config.sandbox)).rejects.toBeInstanceOf(
+    SandboxNotFoundError,
+  );
+  await expect(readFile(join(first, 'session.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(readFile(join(second, 'session.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await readFile(join(other, 'session.jsonl'), 'utf8')).toBe('Opaque SDK bytes');
+  await deleteCloudSessionResources({ config, sessionId: fixture.sessionId, sandboxId });
+
+  async function removeSandbox() {
+    await Sandbox.kill(sandboxId, config.sandbox);
+  }
+});
 
 it('executes and resumes the real HTTP, queue, Pi, DeepSeek and E2B chain', async () => {
   const environment = parseWorkerEnv(process.env);

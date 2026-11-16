@@ -4,7 +4,7 @@ import { openAsBlob } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Sandbox } from 'e2b';
+import { FileNotFoundError, Sandbox } from 'e2b';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
@@ -58,6 +58,12 @@ it('runs file and command operations in the actual VM', async () => {
 
 it('returns a nonzero exit as a command outcome', async () => {
   expect(await runCommand('exit 7')).toEqual({ exitCode: 7, text: '' });
+});
+
+it('preserves the SDK file error without classifying it as a missing sandbox', async () => {
+  const missing = `${workspace.directory}/missing-${randomUUID()}`;
+  await expect(workspace.readFile(missing)).rejects.toBeInstanceOf(FileNotFoundError);
+  expect((await runCommand('printf ready')).text).toBe('ready');
 });
 
 it('bounds an untrusted file download before buffering its complete contents', async () => {

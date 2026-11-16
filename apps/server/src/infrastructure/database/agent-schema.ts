@@ -1,4 +1,4 @@
-import type { AgentRun } from '@always-on/contracts/agents';
+import type { Agent, AgentRun, AgentSession } from '@always-on/contracts/agents';
 import { sql } from 'drizzle-orm';
 import {
   check,
@@ -27,6 +27,7 @@ export const AGENTS = pgTable('agents', {
   name: text('name').notNull(),
   visibility: text('visibility', { enum: ['private', 'workspace'] }).notNull(),
   configuration: jsonb('configuration').$type<unknown>().notNull(),
+  status: text('status').$type<Agent['status']>().notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -45,6 +46,12 @@ export const AGENT_SESSIONS = pgTable(
       .notNull()
       .references(() => AUTH_USERS.id, { onDelete: 'restrict' }),
     configuration: jsonb('configuration').$type<unknown>().notNull(),
+    title: text('title'),
+    status: text('status').$type<AgentSession['status'] | 'deleting'>().notNull().default('active'),
+    deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
+    cleanupAttempts: integer('cleanup_attempts').notNull().default(0),
+    cleanupAfter: timestamp('cleanup_after', { withTimezone: true }),
+    cleanupError: text('cleanup_error'),
     revision: integer('revision').notNull().default(0),
     checkpoint: jsonb('execution_checkpoint').$type<unknown>(),
     sandboxId: text('sandbox_id'),
@@ -56,6 +63,16 @@ export const AGENT_SESSIONS = pgTable(
       table.createdBy,
       table.createdAt,
       table.id,
+    ),
+    index('agent_sessions_cleanup_idx')
+      .on(table.cleanupAfter)
+      .where(sql`${table.status} = 'deleting'`),
+    check(
+      'agent_sessions_lifecycle_check',
+      sql`(${table.status} in ('active', 'archived') and ${table.deletionRequestedAt} is null
+          and ${table.cleanupAfter} is null and ${table.cleanupAttempts} = 0 and ${table.cleanupError} is null)
+        or (${table.status} = 'deleting' and ${table.deletionRequestedAt} is not null
+          and ${table.cleanupAfter} is not null and ${table.cleanupAttempts} >= 0)`,
     ),
   ],
 );

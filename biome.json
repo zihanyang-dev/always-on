@@ -52,6 +52,17 @@
         "noParameterProperties": "error",
         "noProcessEnv": "error",
         "noUselessElse": "error",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "e2b": {
+                "importNames": ["NotFoundError"],
+                "message": "E2B deprecated NotFoundError. Use SandboxNotFoundError or FileNotFoundError for the operation being handled."
+              }
+            }
+          }
+        },
         "useExportType": "error"
       },
       "suspicious": {

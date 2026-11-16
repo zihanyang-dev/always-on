@@ -20,7 +20,16 @@ export interface Agent extends CreateAgent {
   readonly id: string;
   readonly createdBy: string;
   readonly createdAt: string;
+  readonly status: 'active' | 'disabled';
 }
+
+type AgentChanges = Pick<
+  Agent,
+  'name' | 'instructions' | 'model' | 'reasoningEffort' | 'visibility' | 'status'
+>;
+
+/** Editable defaults and availability; workspace and creator identities remain immutable. */
+export type UpdateAgent = { readonly [Key in keyof AgentChanges]?: AgentChanges[Key] | undefined };
 
 /** A private conversation with its current defaults for subsequent Runs. */
 export type AgentSession = {
@@ -31,6 +40,24 @@ export type AgentSession = {
   readonly configuration: AgentConfiguration;
   readonly revision: number;
   readonly createdAt: string;
+  readonly title: string | null;
+  readonly status: 'active' | 'archived';
+};
+
+/** User-owned conversation organization, independent of execution configuration. */
+export type UpdateSession = {
+  readonly title?: AgentSession['title'] | undefined;
+  readonly status?: AgentSession['status'] | undefined;
+};
+
+/** Durable deletion progress, retained until every owned resource has been released. */
+export type SessionDeletion = {
+  readonly sessionId: string;
+  readonly status: 'deleting';
+  readonly requestedAt: string;
+  readonly attempts: number;
+  readonly nextAttemptAt: string;
+  readonly errorCode: 'resource_cleanup_failed' | null;
 };
 
 type RunIdentity = {
@@ -86,7 +113,7 @@ export interface SessionSnapshot extends SessionMessagePage {
 
 /** Private conversation metadata without instructions, checkpoints or execution credentials. */
 export interface SessionSummary
-  extends Pick<AgentSession, 'id' | 'agentId' | 'workspaceId' | 'createdAt'> {
+  extends Pick<AgentSession, 'id' | 'agentId' | 'workspaceId' | 'createdAt' | 'title' | 'status'> {
   readonly run: AgentRun | null;
 }
 
@@ -105,6 +132,7 @@ export type SessionHistoryQuery = {
 /** Parsed private conversation selection within one Workspace. */
 export interface SessionListQuery extends SessionHistoryQuery {
   readonly workspaceId: string;
+  readonly status: AgentSession['status'];
 }
 
 /** Full message replacements make replay idempotent across refreshes and reconnects. */
@@ -120,13 +148,18 @@ export type SessionEvent =
     };
 
 const INSTRUCTIONS_SCHEMA = z.string().trim().min(1).max(32_000);
-const AGENT_SETTINGS_SCHEMA = z.strictObject({
-  workspaceId: z.string().min(1),
-  name: z.string().trim().min(1).max(100),
+const CONFIGURATION_FIELDS = {
   instructions: INSTRUCTIONS_SCHEMA,
   model: MODEL_REFERENCE_SCHEMA,
   reasoningEffort: z.string().trim().min(1).max(32),
-  visibility: z.enum(['private', 'workspace']).default('private'),
+};
+const VISIBILITY_SCHEMA = z.enum(['private', 'workspace']);
+const SESSION_STATUS_SCHEMA = z.enum(['active', 'archived']);
+const AGENT_SETTINGS_SCHEMA = z.strictObject({
+  workspaceId: z.string().min(1),
+  name: z.string().trim().min(1).max(100),
+  ...CONFIGURATION_FIELDS,
+  visibility: VISIBILITY_SCHEMA,
 });
 const RUN_IDENTITY_SCHEMA = z.object({
   id: z.uuid(),
@@ -151,23 +184,50 @@ export const SESSION_HISTORY_QUERY_SCHEMA: z.ZodType<SessionHistoryQuery> =
 export const SESSION_LIST_QUERY_SCHEMA: z.ZodType<SessionListQuery> = z.strictObject({
   ...PAGE_QUERY_FIELDS,
   workspaceId: z.string().trim().min(1).max(200),
+  status: SESSION_STATUS_SCHEMA.default('active'),
 });
 
 /** Validates execution settings at storage boundaries. */
-export const AGENT_CONFIGURATION_SCHEMA: z.ZodType<AgentConfiguration> = z.strictObject({
-  model: MODEL_REFERENCE_SCHEMA,
-  reasoningEffort: z.string().trim().min(1).max(32),
-  instructions: INSTRUCTIONS_SCHEMA,
-});
+export const AGENT_CONFIGURATION_SCHEMA: z.ZodType<AgentConfiguration> =
+  z.strictObject(CONFIGURATION_FIELDS);
 
 /** Parses Agent creation and resolves documented defaults. */
-export const CREATE_AGENT_SCHEMA: z.ZodType<CreateAgent> = AGENT_SETTINGS_SCHEMA;
+export const CREATE_AGENT_SCHEMA: z.ZodType<CreateAgent> = AGENT_SETTINGS_SCHEMA.extend({
+  visibility: VISIBILITY_SCHEMA.default('private'),
+});
+
+/** Parses partial edits without applying creation defaults to omitted fields. */
+export const UPDATE_AGENT_SCHEMA: z.ZodType<UpdateAgent> = AGENT_SETTINGS_SCHEMA.omit({
+  workspaceId: true,
+})
+  .partial()
+  .extend({ status: z.enum(['active', 'disabled']).optional() })
+  .refine((patch) => Object.keys(patch).length > 0, 'Provide at least one Agent change');
+
+/** Parses explicit naming or archive changes; empty patches and protected fields are rejected. */
+export const UPDATE_SESSION_SCHEMA: z.ZodType<UpdateSession> = z
+  .strictObject({
+    title: z.string().trim().min(1).max(200).nullable().optional(),
+    status: SESSION_STATUS_SCHEMA.optional(),
+  })
+  .refine((patch) => Object.keys(patch).length > 0, 'Provide at least one Session change');
+
+/** Validates observable cleanup progress without exposing resource identities or SDK errors. */
+export const SESSION_DELETION_SCHEMA: z.ZodType<SessionDeletion> = z.object({
+  sessionId: z.uuid(),
+  status: z.literal('deleting'),
+  requestedAt: z.iso.datetime(),
+  attempts: z.number().int().nonnegative(),
+  nextAttemptAt: z.iso.datetime(),
+  errorCode: z.literal('resource_cleanup_failed').nullable(),
+});
 
 /** Validates a saved Agent definition. */
 export const AGENT_SCHEMA: z.ZodType<Agent> = AGENT_SETTINGS_SCHEMA.extend({
   id: z.uuid(),
   createdBy: z.string(),
   createdAt: z.iso.datetime(),
+  status: z.enum(['active', 'disabled']),
 });
 
 /** Starts a conversation against a saved Agent definition. */
@@ -184,6 +244,8 @@ export const AGENT_SESSION_SCHEMA: z.ZodType<AgentSession> = z.object({
   configuration: AGENT_CONFIGURATION_SCHEMA,
   revision: z.number().int().nonnegative(),
   createdAt: z.iso.datetime(),
+  title: z.string().nullable(),
+  status: SESSION_STATUS_SCHEMA,
 });
 
 /** A stable source identity makes an acknowledged submission safe to retry. */
@@ -243,6 +305,8 @@ const SESSION_SUMMARY_SCHEMA = z.object({
   agentId: z.uuid(),
   workspaceId: z.string(),
   createdAt: z.iso.datetime(),
+  title: z.string().nullable(),
+  status: SESSION_STATUS_SCHEMA,
   run: AGENT_RUN_SCHEMA.nullable(),
 });
 

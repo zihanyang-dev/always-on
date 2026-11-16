@@ -39,6 +39,8 @@ pnpm cli agents --json
 
 `pnpm check` 使用 Biome 和 TypeScript，检查循环依赖时包含纯类型导入。生产代码的环境变量只能在配置入口读取；浏览器源码禁止导入 Node 运行时模块和 Agent 执行包。默认导出仅对框架配置文件开放。职责划分、注释准确性和函数可读性仍需人工审查，详见[本轮整理记录](docs/reviews/codebase-style-2026-11-15.md)。
 
+E2B 已弃用的 NotFoundError 命名导入由 Biome 拦截，沙箱与文件缺失使用对应异常类型；这项定向规则不替代 SDK 升级时的类型、文档和行为核对。
+
 `db:generate` 生成迁移；`db:migrate` 应用已提交迁移。CI 会检查迁移变化，包括新生成的未跟踪文件。生产迁移单独执行，API/Worker 启动不会抢跑迁移。CI 在 PR 和 push 时执行检查、单元测试、构建、真实基础设施测试与桌面/移动浏览器测试，不发布部署。
 
 ## 已实现与下一步
@@ -49,6 +51,7 @@ pnpm cli agents --json
 - 已实现：Session 消息校验、PG 原子接收与并发去重；真实 BullMQ Agent Worker 和带过期时间的 Redis Streams。
 - 已实现：云端 Agent/Session/Run、模型和推理强度选择、完整 Pi SDK、独立 E2B 沙箱、业务工具、原生会话接续、取消、PG 执行租约、Redis Streams/SSE 补流。M5 本机通过官方开源 E2B Embed + KVM 运行真实 Firecracker 沙箱；一期真实模型调用仅 DeepSeek。
 - 已实现：Workspace 内的私有会话列表、当前执行状态、稳定游标的消息历史分页，以及与 HTTP/SSE 最近消息窗口衔接；重新登录后可找回并继续原会话，当前成员权限约束所有读取。
+- 已实现：Agent 编辑、停用与空定义删除；私有 Session 命名、归档与可重试异步删除，回收绑定 E2B、全部会话 attempt 文件和持久记录。权限与失败边界见[生命周期设计](docs/adr/0003-agent-session-lifecycle.md)。
 - 尚未实现：登录及 Workspace 前端、Router、长期 Task、设备连接、Timers、跨会话 Memory 整理、审批、Outbox 和对象存储。执行边界与验证范围见[云端 Agent 后端](docs/cloud-agent.md)。
 
 Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；后台扫描 PG 再唤醒 BullMQ。未配置云端执行能力时，Worker 直接退出，API 的认证和健康接口仍可使用。
@@ -63,6 +66,7 @@ Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；�
 - [工作空间与授权方案](docs/workspaces-and-authorization.md)
 - [LobeHub 团队权限与 TS 授权调研](docs/research/teams-and-authorization.md)
 - [云端 Agent 后端与 API](docs/cloud-agent.md)
+- [Agent / Session 生命周期调研](docs/research/agent-session-lifecycle.md)
 - [本机 E2B Embed 部署](deploy/e2b/README.md)
 - [沙箱研究](docs/research/sandbox-design.md)
 - [Lauren Tan 演讲全程笔记与仓库应用](docs/research/lauren-tan-agent-trust.md)

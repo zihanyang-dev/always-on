@@ -3,6 +3,7 @@ import type {
   AgentRun,
   AgentSession,
   SUBMIT_MESSAGE_SCHEMA,
+  UpdateSession,
 } from '@always-on/contracts/agents';
 import { and, eq, sql } from 'drizzle-orm';
 import type { z } from 'zod';
@@ -27,6 +28,10 @@ interface SessionMessageSubmission extends SessionAccess {
 }
 interface SessionRunCancellation extends SessionAccess {
   runId: string;
+}
+
+interface SessionMetadataChange extends SessionAccess {
+  readonly patch: UpdateSession;
 }
 
 /** A submission either reuses its original Run or creates exactly one durable dispatch intent. */
@@ -91,6 +96,31 @@ export async function updateSessionConfiguration({
   }
 }
 
+/** Updates personal organization without granting access to another user's conversation. */
+export async function updateAgentSession({
+  db,
+  sessionId,
+  userId,
+  patch,
+}: SessionMetadataChange): Promise<AgentSession | null> {
+  return db.transaction(update);
+
+  async function update(transaction: DatabaseTransaction) {
+    const session = await readSessionAccess({ transaction, sessionId, userId, action: 'manage' });
+    if (!session) return null;
+
+    // Archiving organizes history; already admitted work keeps its independent Run lifecycle.
+    const [updated] = await transaction
+      .update(AGENT_SESSIONS)
+      .set({ ...patch, revision: sql`${AGENT_SESSIONS.revision} + 1` })
+      .where(eq(AGENT_SESSIONS.id, sessionId))
+      .returning();
+    if (!updated) throw new Error(`Session ${sessionId} disappeared during metadata update`);
+
+    return parseSession(updated);
+  }
+}
+
 /** Commits Inbox input, queued Run and the user's display message in one transaction. */
 export async function submitSessionMessage({
   db,
@@ -132,7 +162,7 @@ export async function cancelSessionRun({
   return db.transaction(cancel);
 
   async function cancel(transaction: DatabaseTransaction) {
-    const session = await readSessionAccess({ transaction, sessionId, userId, action: 'use' });
+    const session = await readSessionAccess({ transaction, sessionId, userId, action: 'manage' });
     if (!session) return null;
 
     const [run] = await transaction
@@ -234,7 +264,11 @@ async function recordSessionInput({
     state: 'completed',
     text: input.text,
   });
-  await advanceRevision(transaction, sessionId);
+  // A genuinely new input resumes an archived conversation; a duplicate remains a read of its Run.
+  await transaction
+    .update(AGENT_SESSIONS)
+    .set({ status: 'active', revision: sql`${AGENT_SESSIONS.revision} + 1` })
+    .where(eq(AGENT_SESSIONS.id, sessionId));
 
   return parseRun(run);
 }

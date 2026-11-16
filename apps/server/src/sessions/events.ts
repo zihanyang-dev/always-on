@@ -10,6 +10,19 @@ const MAX_STREAM_COMPONENT = 18_446_744_073_709_551_615n;
 const STREAM_ENTRY_SCHEMA = z.tuple([z.string(), z.array(z.string())]);
 const STREAM_READ_SCHEMA = z.array(z.tuple([z.string(), z.array(STREAM_ENTRY_SCHEMA)])).nullable();
 
+/** Erases transient conversation content after execution has been fenced by deletion. */
+export async function deleteSessionEvents({
+  redis,
+  prefix,
+  sessionId,
+}: {
+  redis: Redis;
+  prefix: string;
+  sessionId: string;
+}): Promise<void> {
+  await redis.del(getStreamKey({ prefix, sessionId }));
+}
+
 /** A bounded Redis cursor accepted by both replay and Last-Event-ID. */
 export const SESSION_CURSOR_SCHEMA = z
   .string()

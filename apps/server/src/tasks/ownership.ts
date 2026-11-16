@@ -57,7 +57,7 @@ export async function claimRun({
     if (!candidate) return null;
 
     const session = await lockSession(transaction, candidate.sessionId);
-    if (!session) return null;
+    if (!session || session.status === 'deleting') return null;
 
     // A duplicate wake-up cannot bypass a current owner or an unresolved earlier effect.
     const [blocked] = await transaction

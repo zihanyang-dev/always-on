@@ -23,8 +23,37 @@ export async function readSessionAccess({
   transaction: DatabaseTransaction;
   sessionId: string;
   userId: string;
-  action: 'read' | 'use';
+  action: 'read' | 'use' | 'manage';
 }): Promise<AgentSession | null> {
+  const session = await readOwnedSession({
+    transaction,
+    sessionId,
+    userId,
+    action: action === 'read' ? 'read' : 'manage',
+  });
+  if (!session || session.status === 'deleting') return null;
+
+  // Organization and cancellation remain available even when the Agent has been disabled.
+  if (action === 'use') {
+    const agent = await readUsableAgent({ transaction, agentId: session.agentId, userId });
+    if (!agent) return null;
+  }
+
+  return parseSession(session);
+}
+
+/** Locks the owned row, retaining private cleanup facts for the deletion lifecycle. */
+export async function readOwnedSession({
+  transaction,
+  sessionId,
+  userId,
+  action,
+}: {
+  transaction: DatabaseTransaction;
+  sessionId: string;
+  userId: string;
+  action: 'read' | 'manage';
+}): Promise<typeof AGENT_SESSIONS.$inferSelect | null> {
   // Workspace membership never grants access to somebody else's private conversation.
   const [session] = await transaction
     .select()
@@ -37,17 +66,11 @@ export async function readSessionAccess({
     transaction,
     workspaceId: session.workspaceId,
     userId,
-    action,
+    action: action === 'read' ? 'read' : 'use',
   });
   if (!hasAccess) return null;
 
-  // History remains readable after losing execution permission on the Agent itself.
-  if (action === 'use') {
-    const agent = await readUsableAgent({ transaction, agentId: session.agentId, userId });
-    if (!agent) return null;
-  }
-
-  return parseSession(session);
+  return session;
 }
 
 /** Holds current membership through the transaction that reads or admits Session work. */

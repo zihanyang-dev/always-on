@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { pino } from 'pino';
 import { openDatabase } from '../infrastructure/database/index.js';
 import { openAgentWorker } from '../tasks/index.js';
-import { executeCloudRun } from './cloud-agent.js';
+import { deleteCloudSessionResources, executeCloudRun } from './cloud-agent.js';
 import { parseWorkerEnv } from './env.js';
 import { reportError } from './report-error.js';
 import { observeShutdown } from './shutdown.js';
@@ -37,6 +37,7 @@ async function main() {
     createId: randomUUID,
     onError,
     execute: (claim, context) => executeCloudRun({ ...execution, claim, context }),
+    deleteSessionResources: (resources) => deleteCloudSessionResources({ config, ...resources }),
   });
   logger.info('Worker listening');
 

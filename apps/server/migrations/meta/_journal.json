@@ -57,6 +57,13 @@
       "when": 1794752026860,
       "tag": "0007_session_history_pagination",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794796253292,
+      "tag": "0008_agent_session_lifecycle",
+      "breakpoints": true
     }
   ]
 }

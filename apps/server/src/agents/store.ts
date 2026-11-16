@@ -4,10 +4,12 @@ import {
   type Agent,
   type AgentConfiguration,
   type CreateAgent,
+  type UpdateAgent,
 } from '@always-on/contracts/agents';
 import type { ModelOption } from '@always-on/contracts/models';
 import { and, eq, or } from 'drizzle-orm';
 import {
+  AGENT_SESSIONS,
   AGENTS,
   type Database,
   type DatabaseTransaction,
@@ -17,7 +19,12 @@ import { hasAgentPermission } from '../workspaces/index.js';
 
 type AgentRow = typeof AGENTS.$inferSelect;
 
-/** Preserves execution-resource ownership until an explicit Agent deletion lifecycle exists. */
+/** A validated partial edit or a current resource/configuration rejection. */
+export type AgentUpdateResult =
+  | { readonly status: 'updated'; readonly agent: Agent }
+  | { readonly status: 'not_found' | 'unsupported_model_configuration' };
+
+/** Preserves Workspace ownership while any Agent definition still exists. */
 export async function hasWorkspaceAgents({
   db,
   workspaceId,
@@ -32,6 +39,82 @@ export async function hasWorkspaceAgents({
     .limit(1);
 
   return agent !== undefined;
+}
+
+/** Edits defaults under the Agent lock without rewriting existing Session or Run snapshots. */
+export async function updateAgent({
+  db,
+  agentId,
+  userId,
+  patch,
+  models,
+}: {
+  db: Database;
+  agentId: string;
+  userId: string;
+  patch: UpdateAgent;
+  models: readonly ModelOption[];
+}): Promise<AgentUpdateResult> {
+  return db.transaction(update);
+
+  async function update(transaction: DatabaseTransaction): Promise<AgentUpdateResult> {
+    const agent = await readManagedAgent({ transaction, agentId, userId });
+    if (!agent) return { status: 'not_found' };
+
+    // Validate the merged choice: changing only a model can invalidate the existing effort.
+    const configuration = {
+      model: patch.model ?? agent.model,
+      reasoningEffort: patch.reasoningEffort ?? agent.reasoningEffort,
+      instructions: patch.instructions ?? agent.instructions,
+    } satisfies AgentConfiguration;
+    const hasModelChange = patch.model !== undefined || patch.reasoningEffort !== undefined;
+    if (hasModelChange && !isAvailableConfiguration({ configuration, models }))
+      return { status: 'unsupported_model_configuration' };
+
+    const [updated] = await transaction
+      .update(AGENTS)
+      .set({
+        name: patch.name ?? agent.name,
+        visibility: patch.visibility ?? agent.visibility,
+        status: patch.status ?? agent.status,
+        configuration,
+      })
+      .where(eq(AGENTS.id, agentId))
+      .returning();
+    if (!updated) throw new Error(`Agent ${agentId} disappeared during update`);
+
+    return { status: 'updated', agent: parseAgent(updated) };
+  }
+}
+
+/** Deletes an empty definition while preserving all existing private conversation ownership. */
+export async function deleteAgent({
+  db,
+  agentId,
+  userId,
+}: {
+  db: Database;
+  agentId: string;
+  userId: string;
+}): Promise<'deleted' | 'not_found' | 'has_sessions'> {
+  return db.transaction(remove);
+
+  async function remove(transaction: DatabaseTransaction) {
+    const agent = await readManagedAgent({ transaction, agentId, userId });
+    if (!agent) return 'not_found';
+
+    // The Agent lock excludes new Session creation; never cascade teammates' private history.
+    const [session] = await transaction
+      .select({ id: AGENT_SESSIONS.id })
+      .from(AGENT_SESSIONS)
+      .where(eq(AGENT_SESSIONS.agentId, agentId))
+      .limit(1);
+    if (session) return 'has_sessions';
+
+    await transaction.delete(AGENTS).where(eq(AGENTS.id, agentId));
+
+    return 'deleted';
+  }
 }
 
 /** Saves an Agent only while the creator retains permission in its workspace. */
@@ -120,10 +203,36 @@ export async function readUsableAgent({
     .where(eq(AGENTS.id, agentId))
     .for('share');
   if (!agent) return null;
+  if (agent.status !== 'active') return null;
   if (agent.visibility === 'private' && agent.createdBy !== userId) return null;
 
   const roles = await readMembership({ transaction, workspaceId: agent.workspaceId, userId });
   if (!roles || !hasAgentPermission({ roles, action: 'use' })) return null;
+
+  return parseAgent(agent);
+}
+
+async function readManagedAgent({
+  transaction,
+  agentId,
+  userId,
+}: {
+  transaction: DatabaseTransaction;
+  agentId: string;
+  userId: string;
+}) {
+  const [agent] = await transaction
+    .select()
+    .from(AGENTS)
+    .where(eq(AGENTS.id, agentId))
+    .for('update');
+  if (!agent) return null;
+  if (agent.visibility === 'private' && agent.createdBy !== userId) return null;
+
+  const roles = await readMembership({ transaction, workspaceId: agent.workspaceId, userId });
+  if (!roles || !hasAgentPermission({ roles, action: 'update' })) return null;
+  const canManage = agent.createdBy === userId || hasAgentPermission({ roles, action: 'manage' });
+  if (!canManage) return null;
 
   return parseAgent(agent);
 }
@@ -174,6 +283,7 @@ function parseAgent(row: AgentRow) {
     createdBy: row.createdBy,
     name: row.name,
     visibility: row.visibility,
+    status: row.status,
     ...configuration,
     createdAt: row.createdAt.toISOString(),
   });
