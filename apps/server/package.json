@@ -7,8 +7,8 @@
     "start": "node src/entrypoints/api.ts",
     "db:migrate": "node --env-file-if-exists=../../.env.local migrations/run.ts",
     "db:migration:create": "node-pg-migrate create --migration-file-language sql --migration-filename-format utc",
-    "db:types": "kysely-codegen",
-    "db:types:check": "kysely-codegen --verify",
+    "db:types": "node --env-file-if-exists=../../.env.local migrations/generate-types.ts",
+    "db:types:check": "node --env-file-if-exists=../../.env.local migrations/generate-types.ts --verify",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

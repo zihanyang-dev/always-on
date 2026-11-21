@@ -2,6 +2,5 @@
   "dialect": "postgres",
   "defaultSchemas": ["always_on"],
   "includePattern": "always_on.*",
-  "envFile": "../../.env.local",
   "outFile": "src/infrastructure/database/database.types.ts"
 }
