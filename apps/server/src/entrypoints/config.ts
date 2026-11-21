@@ -48,19 +48,8 @@ export function readApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
   }
 
   const values = parsed.data;
-  const authUrl = new URL(values.BETTER_AUTH_URL);
-  if (
-    authUrl.pathname !== '/' ||
-    authUrl.search ||
-    authUrl.hash ||
-    authUrl.username ||
-    authUrl.password
-  )
-    throw new Error('BETTER_AUTH_URL must be an origin');
-  if (values.NODE_ENV === 'production' && authUrl.protocol !== 'https:')
-    throw new Error('BETTER_AUTH_URL must use HTTPS in production');
-  if (values.RESEND_API_KEY && !values.EMAIL_FROM)
-    throw new Error('EMAIL_FROM is required when RESEND_API_KEY is set');
+  const origin = readAuthOrigin({ url: values.BETTER_AUTH_URL, nodeEnv: values.NODE_ENV });
+  const email = readEmailConfig({ apiKey: values.RESEND_API_KEY, from: values.EMAIL_FROM });
 
   return {
     databaseUrl: values.DATABASE_URL,
@@ -72,7 +61,7 @@ export function readApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       otlpEndpoint: values.OTEL_EXPORTER_OTLP_ENDPOINT,
     },
     auth: {
-      origin: authUrl.origin,
+      origin,
       secret: values.BETTER_AUTH_SECRET,
       github: readCredentials({
         provider: 'GITHUB',
@@ -85,11 +74,32 @@ export function readApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
         clientSecret: values.GOOGLE_CLIENT_SECRET,
       }),
     },
-    email:
-      values.RESEND_API_KEY && values.EMAIL_FROM
-        ? { apiKey: values.RESEND_API_KEY, from: values.EMAIL_FROM }
-        : undefined,
+    email,
   };
+}
+
+function readAuthOrigin({ url, nodeEnv }: { url: string; nodeEnv: string | undefined }) {
+  const parsed = new URL(url);
+  const hasExtraParts =
+    parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.username || parsed.password;
+  if (hasExtraParts) throw new Error('BETTER_AUTH_URL must be an origin');
+  if (nodeEnv === 'production' && parsed.protocol !== 'https:')
+    throw new Error('BETTER_AUTH_URL must use HTTPS in production');
+
+  return parsed.origin;
+}
+
+function readEmailConfig({
+  apiKey,
+  from,
+}: {
+  apiKey: string | undefined;
+  from: string | undefined;
+}): EmailConfig | undefined {
+  if (!apiKey) return undefined;
+  if (!from) throw new Error('EMAIL_FROM is required when RESEND_API_KEY is set');
+
+  return { apiKey, from };
 }
 
 function isOtlpEndpoint(value: string) {

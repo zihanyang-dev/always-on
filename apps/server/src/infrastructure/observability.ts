@@ -31,27 +31,7 @@ export function startObservability({
     level: logLevel,
     mixin: activeTraceFields,
   });
-  const resource = resourceFromAttributes({ 'service.name': serviceName });
-  const tracerProvider = new TracerProvider({
-    resource,
-    spanProcessors: otlpEndpoint
-      ? [
-          new BatchSpanProcessor({
-            exporter: new OTLPTraceExporter({ url: signalUrl(otlpEndpoint, 'traces') }),
-          }),
-        ]
-      : [],
-  });
-  const meterProvider = new MeterProvider({
-    resource,
-    readers: otlpEndpoint
-      ? [
-          new PeriodicExportingMetricReader({
-            exporter: new OTLPMetricExporter({ url: signalUrl(otlpEndpoint, 'metrics') }),
-          }),
-        ]
-      : [],
-  });
+  const { tracerProvider, meterProvider } = createProviders({ serviceName, otlpEndpoint });
 
   context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
   propagation.setGlobalPropagator(new W3CTraceContextPropagator());
@@ -70,11 +50,39 @@ export function startObservability({
     if (results.some((result) => result.status === 'rejected')) {
       logger.error('telemetry.flush_failed');
     }
+
     metrics.disable();
     trace.disable();
     propagation.disable();
     context.disable();
   }
+}
+
+function createProviders({
+  serviceName,
+  otlpEndpoint,
+}: Pick<ObservabilityConfig, 'serviceName' | 'otlpEndpoint'>) {
+  const resource = resourceFromAttributes({ 'service.name': serviceName });
+  if (!otlpEndpoint) {
+    return {
+      tracerProvider: new TracerProvider({ resource }),
+      meterProvider: new MeterProvider({ resource }),
+    };
+  }
+
+  const traceExporter = new OTLPTraceExporter({ url: signalUrl(otlpEndpoint, 'traces') });
+  const metricExporter = new OTLPMetricExporter({ url: signalUrl(otlpEndpoint, 'metrics') });
+
+  return {
+    tracerProvider: new TracerProvider({
+      resource,
+      spanProcessors: [new BatchSpanProcessor({ exporter: traceExporter })],
+    }),
+    meterProvider: new MeterProvider({
+      resource,
+      readers: [new PeriodicExportingMetricReader({ exporter: metricExporter })],
+    }),
+  };
 }
 
 function activeTraceFields() {

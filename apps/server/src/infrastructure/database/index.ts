@@ -5,6 +5,7 @@ import type { DB } from './database.types.ts';
 export const DATABASE_SCHEMA = 'always_on';
 
 export type Database = Kysely<DB>;
+export type DatabaseSchema = DB;
 export type DatabaseTransaction = Transaction<DB>;
 
 /** Opens the per-process pool. Dispose the returned Kysely instance on shutdown. */

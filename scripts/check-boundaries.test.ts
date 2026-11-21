@@ -104,6 +104,30 @@ test('routes use the public HTTP entry and HTTP stays independent of domains', (
   );
 });
 
+test('a channel can publish through Work without exposing its store to adapters', () => {
+  const webhook = 'apps/server/src/channels/webhook/webhook-routes.ts';
+  const work = 'apps/server/src/work/inbox/inbox-store.ts';
+  assert.deepEqual(
+    findBoundaryViolations(
+      webhook,
+      `import type { Inbox } from '../../work/index.ts'; import { Webhook } from 'standardwebhooks';`,
+    ),
+    [],
+  );
+  assert.equal(
+    findBoundaryViolations(
+      webhook,
+      `import { createInbox } from '../../work/inbox/inbox-store.ts';`,
+    ).length,
+    1,
+  );
+  assert.equal(
+    findBoundaryViolations(work, `import '../../channels/index.ts'; import 'standardwebhooks';`)
+      .length,
+    2,
+  );
+});
+
 test('Access routes use their stores and the public authentication entry', () => {
   const route = 'apps/server/src/access/workspaces/workspace-routes.ts';
   const imports = `

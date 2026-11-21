@@ -39,6 +39,10 @@ export function createAuthentication({
   config: AuthenticationConfig;
   sendEmail: SendEmail | undefined;
 }): Authentication {
+  const socialProviders = {
+    ...(config.github && { github: config.github }),
+    ...(config.google && { google: config.google }),
+  };
   const auth = betterAuth({
     database: authDatabase(db),
     appName: 'Always On',
@@ -46,10 +50,7 @@ export function createAuthentication({
     baseURL: config.origin,
     trustedOrigins: [config.origin],
     secret: config.secret,
-    socialProviders: {
-      ...(config.github && { github: config.github }),
-      ...(config.google && { google: config.google }),
-    },
+    socialProviders,
     user: { modelName: 'users' },
     session: { modelName: 'auth_sessions' },
     account: {
@@ -68,8 +69,8 @@ export function createAuthentication({
 
   const loginMethods: LoginMethod[] = [];
   if (sendEmail) loginMethods.push('email-password');
-  if (config.github) loginMethods.push('github');
-  if (config.google) loginMethods.push('google');
+  if (socialProviders.github) loginMethods.push('github');
+  if (socialProviders.google) loginMethods.push('google');
 
   return { loginMethods, handle, getUser };
 
@@ -77,6 +78,7 @@ export function createAuthentication({
     const headers = new Headers(request.headers);
     headers.delete(CLIENT_IP_HEADER);
     if (clientIp) headers.set(CLIENT_IP_HEADER, clientIp);
+
     return auth.handler(new Request(request, { headers }));
   }
 

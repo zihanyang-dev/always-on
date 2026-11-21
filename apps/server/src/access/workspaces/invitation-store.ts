@@ -28,6 +28,7 @@ const INVITATION_COLUMNS = [
 const DATABASE_NOW = sql<Date>`clock_timestamp()`;
 
 type IssueInvitation = WorkspaceActor & { email: string; role: InvitationRole };
+type Invitee = { workspaceId: string; email: string };
 type IssuedInvitation = { invitation: WorkspaceInvitation; workspaceName: string; token: string };
 type CancelInvitation = WorkspaceActor & { invitationId: string };
 type InvitationProof = { token: string; email: string };
@@ -58,28 +59,16 @@ export function createInvitationStore(db: Database): InvitationStore {
       });
       if (!access.ok) return access;
 
-      const member = await transaction
-        .selectFrom('workspace_members')
-        .innerJoin('users', 'users.id', 'workspace_members.user_id')
-        .select('users.id')
-        .where('workspace_members.workspace_id', '=', workspaceId)
-        .where('users.email', '=', email)
-        .executeTakeFirst();
-      if (member) return failure('already_member');
+      const invitee = { workspaceId, email };
+      if (await hasMemberWithEmail(transaction, invitee)) return failure('already_member');
 
-      await transaction
-        .updateTable('workspace_invitations')
-        .set({ status: 'cancelled' })
-        .where('workspace_id', '=', workspaceId)
-        .where('email', '=', email)
-        .where('status', '=', 'pending')
-        .execute();
-
+      await cancelPreviousInvitation(transaction, invitee);
       const workspace = await transaction
         .selectFrom('workspaces')
         .select('name')
         .where('id', '=', workspaceId)
         .executeTakeFirstOrThrow();
+
       const token = randomBytes(32).toString('base64url');
       const invitation = await transaction
         .insertInto('workspace_invitations')
@@ -125,6 +114,7 @@ export function createInvitationStore(db: Database): InvitationStore {
         .orderBy('id')
         .limit(limit + 1)
         .execute();
+
       return success(makePage(rows, limit, (row) => ({ time: row.createdAt, id: row.id })));
     });
   }
@@ -200,6 +190,34 @@ export function createInvitationStore(db: Database): InvitationStore {
       return rejected ? success(undefined) : failure('invitation_used');
     });
   }
+}
+
+async function hasMemberWithEmail(
+  transaction: DatabaseTransaction,
+  { workspaceId, email }: Invitee,
+) {
+  const member = await transaction
+    .selectFrom('workspace_members')
+    .innerJoin('users', 'users.id', 'workspace_members.user_id')
+    .select('users.id')
+    .where('workspace_members.workspace_id', '=', workspaceId)
+    .where('users.email', '=', email)
+    .executeTakeFirst();
+
+  return member !== undefined;
+}
+
+async function cancelPreviousInvitation(
+  transaction: DatabaseTransaction,
+  { workspaceId, email }: Invitee,
+) {
+  await transaction
+    .updateTable('workspace_invitations')
+    .set({ status: 'cancelled' })
+    .where('workspace_id', '=', workspaceId)
+    .where('email', '=', email)
+    .where('status', '=', 'pending')
+    .execute();
 }
 
 async function lockPendingInvitation(

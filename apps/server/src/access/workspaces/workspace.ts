@@ -35,7 +35,7 @@ export function success<T>(value: T): { ok: true; value: T } {
   return { ok: true, value };
 }
 
-export function failure(error: WorkspaceError): { ok: false; error: WorkspaceError } {
+export function failure<E extends WorkspaceError>(error: E): { ok: false; error: E } {
   return { ok: false, error };
 }
 

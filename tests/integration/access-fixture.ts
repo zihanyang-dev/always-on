@@ -21,10 +21,12 @@ type ClientOptions = {
   body?: object | string;
   origin?: string;
   ip?: number;
+  headers?: Record<string, string>;
 };
 
 export type AccessClient = ReturnType<typeof createClient>;
-type AccessFixture = {
+type AppOptions = Pick<Parameters<typeof createApp>[0], 'findWebhookConnection' | 'observability'>;
+export type AccessFixture = {
   db: ReturnType<typeof openDatabase>;
   request: AccessClient;
   register: (input: { email: string; ip: number }) => Promise<{ userId: string; cookie: string }>;
@@ -36,7 +38,7 @@ type AccessFixture = {
 
 export async function withAccessFixture(
   check: (fixture: AccessFixture) => Promise<void>,
-  { defaultIsolation }: { defaultIsolation?: 'repeatable read' } = {},
+  { defaultIsolation, ...appOptions }: AppOptions & { defaultIsolation?: 'repeatable read' } = {},
 ): Promise<void> {
   const connectionString = process.env.TEST_DATABASE_URL;
   if (!connectionString) throw new Error('TEST_DATABASE_URL is required for integration tests');
@@ -49,17 +51,19 @@ export async function withAccessFixture(
     const url = new URL(connectionString);
     url.pathname = `/${databaseName}`;
     try {
-      await migrateDatabase(url.href);
-      await migrateDatabase(url.href);
-      await run('pnpm', ['--filter', '@always-on/server', 'db:types:check'], {
-        env: { ...process.env, DATABASE_URL: url.href },
-      });
+      await migrateTestDatabase(url.href);
       if (defaultIsolation === 'repeatable read')
         await observer.query(
           `ALTER DATABASE "${databaseName}" SET default_transaction_isolation TO 'repeatable read'`,
         );
 
-      await exerciseAccess({ databaseName, databaseUrl: url.href, observer, check });
+      await exerciseAccess({
+        databaseName,
+        databaseUrl: url.href,
+        observer,
+        check,
+        appOptions,
+      });
     } finally {
       await observer.query(`DROP DATABASE "${databaseName}"`);
     }
@@ -68,13 +72,23 @@ export async function withAccessFixture(
   }
 }
 
+async function migrateTestDatabase(databaseUrl: string) {
+  await migrateDatabase(databaseUrl);
+  await migrateDatabase(databaseUrl);
+  await run('pnpm', ['--filter', '@always-on/server', 'db:types:check'], {
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+  });
+}
+
 async function exerciseAccess({
   databaseName,
   databaseUrl,
   observer,
   check,
+  appOptions,
 }: Pick<AccessFixture, 'databaseName' | 'databaseUrl' | 'observer'> & {
   check: (fixture: AccessFixture) => Promise<void>;
+  appOptions: AppOptions;
 }) {
   const mail: Parameters<SendEmail>[0][] = [];
   const errors: unknown[] = [];
@@ -91,6 +105,7 @@ async function exerciseAccess({
       mail.push(message);
     },
     reportError: (error) => errors.push(error),
+    ...appOptions,
   });
   const request = createClient(app);
 
@@ -137,9 +152,17 @@ async function exerciseAccess({
 function createClient(app: ReturnType<typeof createApp>) {
   return async function request(
     path: string,
-    { method = 'GET', cookie, body, origin = ORIGIN, ip = 1 }: ClientOptions = {},
+    {
+      method = 'GET',
+      cookie,
+      body,
+      origin = ORIGIN,
+      ip = 1,
+      headers: extraHeaders,
+    }: ClientOptions = {},
   ): Promise<Response> {
-    const headers = new Headers({ Origin: origin });
+    const headers = new Headers(extraHeaders);
+    headers.set('Origin', origin);
     if (cookie) headers.set('Cookie', cookie);
     const init: RequestInit = { method, headers };
     if (body !== undefined) {

@@ -13,7 +13,7 @@ apps/
       http/                        # 通用请求处理
       work/{inbox,routing,lifecycle,reminders}/
       execution/{runs,sessions,targets}/
-      channels/{github,feishu,delivery}/
+      channels/{github,feishu,webhook,delivery}/
       access/{authentication,workspaces,approvals}/
       billing/
       infrastructure/database/     # 连接与事务能力
@@ -35,7 +35,8 @@ API 与 Worker 入口负责组装。跨领域导入使用对方的 `index.ts`。
 | --- | --- |
 | `work` | `access` |
 | `execution` | `access`、`billing` |
-| `channels`、`billing` | `access` |
+| `channels` | `access`、`work` |
+| `billing` | `access` |
 
 领域可以使用 `http` 和 `infrastructure`。`http` 可以使用 `infrastructure`。基础设施只提供底层能力，领域写入和判断由各自的公开操作表达。
 

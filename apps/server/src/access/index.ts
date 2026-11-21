@@ -4,7 +4,12 @@ import type { SendEmail } from '../infrastructure/index.ts';
 import { type AuthenticationConfig, createAuthentication } from './authentication/index.ts';
 import { createWorkspaceAccessRoutes } from './workspaces/index.ts';
 
-export type { AuthenticationConfig, OAuthCredentials } from './authentication/index.ts';
+export type {
+  AuthenticationConfig,
+  OAuthCredentials,
+  SignedInUser,
+} from './authentication/index.ts';
+export { authorizeMessageSubmission } from './workspaces/index.ts';
 
 export type AccessOptions = {
   db: Parameters<typeof createWorkspaceAccessRoutes>[0]['db'];
@@ -14,12 +19,10 @@ export type AccessOptions = {
 };
 
 /** Composes application identity and Workspace access. */
-export function createAccessRoutes({
-  db,
-  config,
-  sendEmail,
-  reportError,
-}: AccessOptions): Hono<HttpEnv> {
+export function createAccess({ db, config, sendEmail, reportError }: AccessOptions): {
+  routes: Hono<HttpEnv>;
+  getUser: ReturnType<typeof createAuthentication>['getUser'];
+} {
   const auth = createAuthentication({ db, config, sendEmail });
   const workspaces = createWorkspaceAccessRoutes({
     db,
@@ -47,5 +50,5 @@ export function createAccessRoutes({
 
   routes.route('/workspaces', workspaces);
 
-  return routes;
+  return { routes, getUser: auth.getUser };
 }

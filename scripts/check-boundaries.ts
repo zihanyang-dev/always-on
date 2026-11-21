@@ -19,7 +19,7 @@ const WORKSPACE_IMPORTS = new Map<string, readonly string[]>([
 const DOMAIN_IMPORTS = new Map<string, readonly string[]>([
   ['work', ['access']],
   ['execution', ['access', 'billing']],
-  ['channels', ['access']],
+  ['channels', ['access', 'work']],
   ['access', []],
   ['billing', ['access']],
 ]);
@@ -37,6 +37,16 @@ const DATABASE_PACKAGES = new Set([
   'postgres',
   'prisma',
   'typeorm',
+]);
+const SERVER_PACKAGE_OWNERS = new Map([
+  [
+    'standardwebhooks',
+    { root: `${SERVER_SOURCE}channels/`, reason: 'Channels own webhook signature verification.' },
+  ],
+  [
+    'better-auth',
+    { root: `${AUTHENTICATION}/`, reason: 'The authentication module owns the Better Auth SDK.' },
+  ],
 ]);
 const SOURCE_IMPORTS = new Set([
   'ImportDeclaration',
@@ -57,6 +67,10 @@ export function findBoundaryViolations(file: string, code: string): BoundaryViol
   return violations;
 
   function visit(value: unknown) {
+    if (Array.isArray(value)) {
+      for (const child of value) visit(child);
+      return;
+    }
     if (!isRecord(value) || typeof value.type !== 'string') return;
 
     const specifier = moduleSpecifier(value);
@@ -65,13 +79,7 @@ export function findBoundaryViolations(file: string, code: string): BoundaryViol
       if (reason) violations.push({ specifier, reason });
     }
 
-    for (const child of Object.values(value)) {
-      if (Array.isArray(child)) {
-        for (const item of child) visit(item);
-      } else {
-        visit(child);
-      }
-    }
+    for (const child of Object.values(value)) visit(child);
   }
 }
 
@@ -103,6 +111,7 @@ function checkImport({ file, workspace, specifier }: ImportEdge): string | undef
   if (/^\.{1,2}\//.test(specifier)) return checkRelativeImport({ file, workspace, specifier });
   if (posix.isAbsolute(specifier) || specifier.startsWith('file:'))
     return 'Use a relative import within the workspace project or a public package export.';
+
   if (specifier.startsWith('@always-on/')) {
     if (!WORKSPACE_IMPORTS.get(workspace)?.includes(specifier))
       return 'Use one of the public contracts allowed for this application.';
@@ -113,14 +122,13 @@ function checkImport({ file, workspace, specifier }: ImportEdge): string | undef
     .split('/')
     .slice(0, specifier.startsWith('@') ? 2 : 1)
     .join('/');
+
   if (DATABASE_PACKAGES.has(packageName) && !isPersistence(file))
     return 'Database drivers and ORM imports belong in server persistence or migrations.';
-  if (
-    workspace === 'apps/server' &&
-    packageName === 'better-auth' &&
-    !file.startsWith(`${AUTHENTICATION}/`)
-  )
-    return 'The authentication module owns the Better Auth SDK.';
+  if (workspace !== 'apps/server') return;
+
+  const owner = SERVER_PACKAGE_OWNERS.get(packageName);
+  if (owner && !file.startsWith(owner.root)) return owner.reason;
 }
 
 function checkRelativeImport({ file, workspace, specifier }: ImportEdge): string | undefined {
@@ -128,23 +136,27 @@ function checkRelativeImport({ file, workspace, specifier }: ImportEdge): string
   if (!target.startsWith(`${workspace}/`)) return 'Use a public package export to cross projects.';
   if (workspace !== 'apps/server') return;
 
-  if (target === DATABASE || target.startsWith(`${DATABASE}/`)) {
-    if (serverArea(file) === 'entrypoints' && isPublicEntry(target, DATABASE)) return;
-    if (!isPersistence(file)) return 'Call a store operation to access the database.';
-    if (!file.startsWith(`${DATABASE}/`) && !isPublicEntry(target, DATABASE))
-      return 'Use the public database infrastructure index.';
-    return;
-  }
+  if (target === DATABASE || target.startsWith(`${DATABASE}/`))
+    return checkDatabaseImport(file, target);
 
   if (!target.startsWith(SERVER_SOURCE)) {
     if (file.startsWith(MIGRATIONS) && target.startsWith(MIGRATIONS)) return;
     return 'Server source imports stay in src; migrations are a separate entry point.';
   }
+
   if (isSchemaFile(target) && DOMAIN_IMPORTS.has(serverArea(target) ?? '') && !isPersistence(file))
     return 'Keep database schema imports in persistence; call the owning store instead.';
   if (file.startsWith(MIGRATIONS) && isPersistence(target) && isSchemaFile(target)) return;
 
   return checkServerAreaImport(file, target);
+}
+
+function checkDatabaseImport(file: string, target: string): string | undefined {
+  const isDatabaseEntry = isPublicEntry(target, DATABASE);
+  if (serverArea(file) === 'entrypoints' && isDatabaseEntry) return;
+  if (!isPersistence(file)) return 'Call a store operation to access the database.';
+  if (!file.startsWith(`${DATABASE}/`) && !isDatabaseEntry)
+    return 'Use the public database infrastructure index.';
 }
 
 function checkServerAreaImport(file: string, target: string): string | undefined {

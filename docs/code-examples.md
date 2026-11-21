@@ -26,6 +26,7 @@ export function listDocuments({
 ```ts
 export function registerDocumentRoutes(routes: Routes, documents: DocumentStore): void {
   routes.get('/documents/:id', getDocument);
+
   routes.delete('/documents/:id', deleteDocument);
 
   async function getDocument(request: RequestContext) {
@@ -41,6 +42,23 @@ export function registerDocumentRoutes(routes: Routes, documents: DocumentStore)
 
     return deleted ? request.noContent() : request.notFound();
   }
+}
+```
+
+## 守卫紧跟读取，提交顺序写在主线
+
+在同一个操作里看得出锁定、校验和更新的先后关系。失败结果紧跟相关条件，后续步骤可以从上往下读。
+
+```ts
+async function publishDraft(transaction: Transaction, id: string): Promise<PublishResult> {
+  const draft = await lockDraft(transaction, id);
+  if (!draft) return { status: 'not_found' };
+  if (draft.status !== 'ready') return { status: 'not_ready' };
+
+  const document = await savePublishedDocument(transaction, draft);
+  await markDraftPublished(transaction, id);
+
+  return { status: 'published', document };
 }
 ```
 

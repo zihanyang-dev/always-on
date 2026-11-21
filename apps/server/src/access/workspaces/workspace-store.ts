@@ -78,6 +78,7 @@ export function createWorkspaceStore(db: Database): WorkspaceStore {
       .orderBy('w.id')
       .limit(limit + 1)
       .execute();
+
     return makePage(rows, limit, (row) => ({ time: row.createdAt, id: row.id }));
   }
 
@@ -85,6 +86,7 @@ export function createWorkspaceStore(db: Database): WorkspaceStore {
     const workspace = await selectWorkspaces(userId)
       .where('w.id', '=', workspaceId)
       .executeTakeFirst();
+
     return workspace ?? null;
   }
 
@@ -143,6 +145,7 @@ export function createWorkspaceStore(db: Database): WorkspaceStore {
         .orderBy('m.user_id')
         .limit(limit + 1)
         .execute();
+
       return success(makePage(rows, limit, (row) => ({ time: row.joinedAt, id: row.userId })));
     });
   }
@@ -202,34 +205,38 @@ async function writeMembership(
   },
 ): Promise<WorkspaceResult<void>> {
   if (currentRole === nextRole) return success(undefined);
-
-  if (currentRole === 'owner') {
-    const owners = await transaction
-      .selectFrom('workspace_members')
-      .select('user_id')
-      .where('workspace_id', '=', member.workspaceId)
-      .where('role', '=', 'owner')
-      .limit(2)
-      .execute();
-
-    if (owners.length < 2) return failure('last_owner');
-  }
+  if (currentRole === 'owner' && !(await hasMultipleOwners(transaction, member.workspaceId)))
+    return failure('last_owner');
 
   const { workspaceId, userId } = member;
-  if (nextRole) {
-    await transaction
-      .updateTable('workspace_members')
-      .set({ role: nextRole })
-      .where('workspace_id', '=', workspaceId)
-      .where('user_id', '=', userId)
-      .execute();
-  } else {
+  if (nextRole === null) {
     await transaction
       .deleteFrom('workspace_members')
       .where('workspace_id', '=', workspaceId)
       .where('user_id', '=', userId)
       .execute();
+
+    return success(undefined);
   }
 
+  await transaction
+    .updateTable('workspace_members')
+    .set({ role: nextRole })
+    .where('workspace_id', '=', workspaceId)
+    .where('user_id', '=', userId)
+    .execute();
+
   return success(undefined);
+}
+
+async function hasMultipleOwners(transaction: DatabaseTransaction, workspaceId: string) {
+  const owners = await transaction
+    .selectFrom('workspace_members')
+    .select('user_id')
+    .where('workspace_id', '=', workspaceId)
+    .where('role', '=', 'owner')
+    .limit(2)
+    .execute();
+
+  return owners.length === 2;
 }

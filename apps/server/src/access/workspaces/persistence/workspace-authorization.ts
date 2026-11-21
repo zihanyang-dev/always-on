@@ -4,11 +4,13 @@ import {
   failure,
   success,
   type WorkspaceActor,
-  type WorkspaceResult,
   type WorkspaceRole,
 } from '../workspace.ts';
 
 type LockMode = 'share' | 'update';
+type WorkspaceAuthorization =
+  | { ok: true; value: WorkspaceRole }
+  | { ok: false; error: 'not_found' | 'forbidden' };
 
 /** Permission reads after the Workspace lock must see newly committed membership changes. */
 export function workspaceTransaction(db: Database): ReturnType<Database['transaction']> {
@@ -50,7 +52,7 @@ export async function authorizeWorkspace(
     lock: LockMode;
     access: 'member' | 'manager';
   },
-): Promise<WorkspaceResult<WorkspaceRole>> {
+): Promise<WorkspaceAuthorization> {
   if (!(await lockWorkspace(transaction, { workspaceId: actor.workspaceId, mode: lock })))
     return failure('not_found');
 
@@ -59,4 +61,15 @@ export async function authorizeWorkspace(
   if (access === 'manager' && !canManageWorkspace(role)) return failure('forbidden');
 
   return success(role);
+}
+
+/** Call in the same READ COMMITTED transaction as the write it authorizes. */
+export async function authorizeMessageSubmission(
+  transaction: DatabaseTransaction,
+  actor: WorkspaceActor,
+): Promise<'allowed' | 'not_found' | 'forbidden'> {
+  const access = await authorizeWorkspace(transaction, { actor, lock: 'share', access: 'member' });
+  if (!access.ok) return access.error;
+
+  return access.value === 'viewer' ? 'forbidden' : 'allowed';
 }

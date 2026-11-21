@@ -9,11 +9,25 @@ export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
   : ColumnType<T, T | undefined, T>;
 
+export type InboxSource = "channel" | "user";
+
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
 export type InvitationRole = "member" | "viewer";
 
 export type InvitationStatus = "accepted" | "cancelled" | "pending" | "rejected";
+
+export type Json = JsonValue;
+
+export type JsonArray = JsonValue[];
+
+export type JsonObject = {
+  [x: string]: JsonValue | undefined;
+};
+
+export type JsonPrimitive = boolean | number | string | null;
+
+export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
@@ -62,6 +76,25 @@ export interface AuthVerifications {
   value: string;
 }
 
+export interface InboxEvents {
+  attempt_count: Generated<number>;
+  available_at: Generated<Timestamp>;
+  completed_at: Timestamp | null;
+  conversation_id: string | null;
+  event_type: string;
+  id: Generated<string>;
+  lease_token: string | null;
+  occurred_at: Timestamp | null;
+  payload: Json;
+  received_at: Generated<Timestamp>;
+  reply_to: string | null;
+  source_event_id: string;
+  source_id: string;
+  source_kind: InboxSource;
+  trace_parent: string | null;
+  workspace_id: string;
+}
+
 export interface Users {
   created_at: Generated<Timestamp>;
   email: string;
@@ -102,6 +135,7 @@ export interface DB {
   auth_rate_limits: AuthRateLimits;
   auth_sessions: AuthSessions;
   auth_verifications: AuthVerifications;
+  inbox_events: InboxEvents;
   users: Users;
   workspace_invitations: WorkspaceInvitations;
   workspace_members: WorkspaceMembers;

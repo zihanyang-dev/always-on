@@ -7,7 +7,7 @@ import {
   SpanStatusCode,
   type TextMapGetter,
 } from '@opentelemetry/api';
-import type { MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler, Next } from 'hono';
 import { routePath } from 'hono/route';
 import type { Observability } from '../infrastructure/index.ts';
 
@@ -28,6 +28,8 @@ const HEADER_GETTER: TextMapGetter<Headers> = {
   get: (headers, key) => headers.get(key) ?? undefined,
 };
 
+type RequestDetails = { id: string; method: string; route: string | undefined };
+
 /** Records one server span, log and duration sample for each request. */
 export function observeHttpRequests({ logger, tracer, meter }: Observability): MiddlewareHandler {
   const duration = meter.createHistogram('http.server.request.duration', {
@@ -40,14 +42,16 @@ export function observeHttpRequests({ logger, tracer, meter }: Observability): M
     },
   });
 
-  return function observeRequest(ctx, next) {
-    const requestId = randomUUID();
+  return observeRequest;
+
+  function observeRequest(ctx: Context, next: Next) {
     const method = METHODS.has(ctx.req.method) ? ctx.req.method : '_OTHER';
     const template = routePath(ctx, -1);
-    const route = template === '*' || template === '/*' ? undefined : template || undefined;
+    const route = template && template !== '*' && template !== '/*' ? template : undefined;
+    const request = { id: randomUUID(), method, route };
     const parent = propagation.extract(ROOT_CONTEXT, ctx.req.raw.headers, HEADER_GETTER);
 
-    ctx.header('X-Request-Id', requestId);
+    ctx.header('X-Request-Id', request.id);
     return tracer.startActiveSpan(
       route ? `${method} ${route}` : method,
       { kind: SpanKind.SERVER },
@@ -60,32 +64,36 @@ export function observeHttpRequests({ logger, tracer, meter }: Observability): M
       try {
         await next();
       } finally {
-        const status = ctx.res.status;
-        const elapsed = performance.now() - startedAt;
-        const failed = status >= 500;
-        const attributes = {
-          'http.request.method': method,
-          'http.response.status_code': status,
-          ...(route && { 'http.route': route }),
-          ...(failed && { 'error.type': String(status) }),
-        };
-
-        span.setAttributes({ ...attributes, 'always_on.request.id': requestId });
-        if (failed) span.setStatus({ code: SpanStatusCode.ERROR });
-
-        duration.record(elapsed / 1000, attributes);
-        logger[failed ? 'error' : 'info'](
-          {
-            request_id: requestId,
-            method,
-            route,
-            status,
-            duration_ms: elapsed,
-          },
-          'http.request',
-        );
-        span.end();
+        try {
+          recordRequest(span, request, { status: ctx.res.status, startedAt });
+        } finally {
+          span.end();
+        }
       }
     }
-  };
+  }
+
+  function recordRequest(
+    span: Span,
+    { id, method, route }: RequestDetails,
+    { status, startedAt }: { status: number; startedAt: number },
+  ) {
+    const elapsed = performance.now() - startedAt;
+    const failed = status >= 500;
+    const attributes = {
+      'http.request.method': method,
+      'http.response.status_code': status,
+      ...(route && { 'http.route': route }),
+      ...(failed && { 'error.type': String(status) }),
+    };
+
+    span.setAttributes({ ...attributes, 'always_on.request.id': id });
+    if (failed) span.setStatus({ code: SpanStatusCode.ERROR });
+
+    duration.record(elapsed / 1000, attributes);
+    logger[failed ? 'error' : 'info'](
+      { request_id: id, method, route, status, duration_ms: elapsed },
+      'http.request',
+    );
+  }
 }

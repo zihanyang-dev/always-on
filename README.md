@@ -6,6 +6,7 @@
 
 - [应用目录、领域依赖与 ORM 归属](docs/adr/0001-repository-boundaries.md)
 - [登录身份与 Workspace 成员权限](docs/adr/0002-workspace-membership.md)
+- [持久 Inbox 与渠道入口](docs/adr/0003-durable-inbox.md)
 - [项目术语](GLOSSARY.md)
 
 ```sh
@@ -27,6 +28,8 @@ pnpm --filter @always-on/server dev
 GitHub 和 Google 的回调地址分别是 `BETTER_AUTH_URL` 下的 `/api/auth/callback/github` 和 `/api/auth/callback/google`。配置 Resend 后可以注册和重置邮箱密码，也可以投递 Workspace 邀请。`GET /api/login-methods` 返回已配置的登录方式。
 
 Workspace、成员和待处理邀请的列表默认返回 25 条，`limit` 可设为 1 到 100。把 `nextCursor` 作为下一次请求的 `cursor`，返回 `null` 时到达末页。
+
+`POST /api/inbox/:workspaceId/messages` 接收包含 `clientMessageId` 和 `text` 的 JSON。客户端为每条消息生成 UUID，重试时复用。服务端持久化后返回 `202` 和 `eventId`。
 
 ## 可观测性
 
