@@ -1,0 +1,5 @@
+{
+  "name": "@always-on/device-connector",
+  "private": true,
+  "type": "module"
+}

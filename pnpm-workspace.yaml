@@ -1,41 +1,13 @@
 packages:
   - apps/*
   - packages/*
-
-catalog:
-  "@biomejs/biome": 2.6.7
-  "@earendil-works/pi-ai": 1.5.2
-  "@earendil-works/pi-coding-agent": 1.5.2
-  "@playwright/test": 1.65.1
-  "@types/node": 26.6.6
-  typescript: 7.0.2
-  vitest: 5.1.0
-  zod: 4.6.7
-  bullmq: 6.7.6
-  drizzle-orm: 0.45.4
-  e2b: 2.64.0
-  better-auth: 1.7.24
-
 minimumReleaseAgeExclude:
-  - "@playwright/test@1.65.1"
-  - playwright-core@1.65.1
-  - playwright@1.65.1
-  - "@better-auth/core@1.7.24"
-  - "@better-auth/drizzle-adapter@1.7.24"
-  - "@better-auth/kysely-adapter@1.7.24"
-  - "@better-auth/memory-adapter@1.7.24"
-  - "@better-auth/mongo-adapter@1.7.24"
-  - "@better-auth/prisma-adapter@1.7.24"
-  - "@better-auth/telemetry@1.7.24"
-  - better-auth@1.7.24
-
-allowBuilds:
-  "@google/genai": false
-  esbuild: true
-  msgpackr-extract: false
-  protobufjs: false
-
-strictPeerDependencies: true
-
-patchedDependencies:
-  better-auth@1.7.24: patches/better-auth@1.7.24.patch
+  - "@better-auth/core@1.7.27"
+  - "@better-auth/drizzle-adapter@1.7.27"
+  - "@better-auth/kysely-adapter@1.7.27"
+  - "@better-auth/memory-adapter@1.7.27"
+  - "@better-auth/mongo-adapter@1.7.27"
+  - "@better-auth/prisma-adapter@1.7.27"
+  - "@better-auth/telemetry@1.7.27"
+  - "@hono/node-server@2.1.11"
+  - better-auth@1.7.27

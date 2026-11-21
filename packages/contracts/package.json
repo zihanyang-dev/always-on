@@ -1,35 +1,5 @@
 {
   "name": "@always-on/contracts",
-  "version": "0.0.0",
   "private": true,
-  "type": "module",
-  "files": [
-    "dist"
-  ],
-  "exports": {
-    "./models": {
-      "types": "./dist/models.d.ts",
-      "import": "./dist/models.js"
-    },
-    "./agents": {
-      "types": "./dist/agents.d.ts",
-      "import": "./dist/agents.js"
-    },
-    "./users": {
-      "types": "./dist/users.d.ts",
-      "import": "./dist/users.js"
-    },
-    "./system": {
-      "types": "./dist/system.d.ts",
-      "import": "./dist/system.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit",
-    "dev:types": "tsc --watch --preserveWatchOutput"
-  },
-  "dependencies": {
-    "zod": "catalog:"
-  }
+  "type": "module"
 }

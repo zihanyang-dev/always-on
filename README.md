@@ -1,75 +1,54 @@
 # Always On
 
-通用长期运行 Agent 平台的工程骨架。Web、API/Worker、CLI 共用明确的协议契约；产品状态保存在 PostgreSQL，BullMQ 负责后台任务，Redis Streams 负责实时事件。
+服务端支持邮箱、GitHub 和 Google 登录，以及 Workspace、成员和邀请管理。其余领域随功能引入。
 
-## 本地启动
+## 目录与检查
 
-使用 `.node-version` 中的 Node 版本和 `package.json` 中锁定的 pnpm，准备可用的 Docker。
+- [应用目录、领域依赖与 ORM 归属](docs/adr/0001-repository-boundaries.md)
+- [登录身份与 Workspace 成员权限](docs/adr/0002-workspace-membership.md)
+- [项目术语](GLOSSARY.md)
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm init:local
-pnpm infra:up
-pnpm build
-pnpm db:migrate
-pnpm dev
+pnpm check
 ```
 
-Web：`http://localhost:5173`，API：`http://localhost:3001`。PG 使用 `15432`，Redis 使用 `16379`；不会复用现有项目的服务或数据卷。`infra:down` 停止本项目服务并保留卷。
+`pnpm check` 运行 Biome、TypeScript、依赖边界检查和单元测试。`pnpm test:integration` 使用 `TEST_DATABASE_URL` 在测试实例创建临时数据库，重放迁移、核对生成类型并验证服务端行为。测试连接需要建库权限。
 
-`.env.example` 是本地后端配置说明，`.env.local` 保存实际值且不会提交。`init:local` 不覆盖现有文件。API/Worker 启动时各自解析所需配置；Web 通过同源 `/api` 获取白名单公开设置。
+## 服务端开发
 
-Web 使用 i18next / react-i18next 支持英文和简体中文。首次访问检测浏览器语言，其他语言回退为英文；页头可切换语言，选择保存在 `localStorage` 的 `always-on.language`。公共文案放在 `app/locales`，功能文案放在对应功能的 `locales`，翻译 key 由资源推导并接受 TypeScript 检查。
-
-Docker Hub 不可达时，可在 `.env.local` 设置 `POSTGRES_IMAGE` / `REDIS_IMAGE`，例如 Google 官方镜像缓存中的 `mirror.gcr.io/library/postgres:17-alpine` 与 `mirror.gcr.io/library/redis:8-alpine`。更换镜像应保留对应服务的主版本与数据目录约定。
-
-## 验证与 CLI
+参考 [.env.example](.env.example) 配置 `.env.local`。`BETTER_AUTH_SECRET` 可以用 `openssl rand -base64 32` 生成。现有进程环境变量优先于本地文件。生产通过部署平台注入配置。
 
 ```sh
-pnpm check
-pnpm test
-pnpm test:integration
-pnpm exec playwright install chromium
-pnpm test:e2e
-pnpm cli status
-pnpm cli agents --json
+pnpm --filter @always-on/server db:migrate
+pnpm --filter @always-on/server dev
 ```
 
-集成测试需要已迁移的 PG 和 Redis。浏览器测试自行启动 API 与 Web，使用独立测试进程；运行前释放本项目的 `3001` 和 `5173` 端口。CLI 命令使用已构建产物，修改后运行 `pnpm build`。
+GitHub 和 Google 的回调地址分别是 `BETTER_AUTH_URL` 下的 `/api/auth/callback/github` 和 `/api/auth/callback/google`。配置 Resend 后可以注册和重置邮箱密码，也可以投递 Workspace 邀请。`GET /api/login-methods` 返回已配置的登录方式。
 
-`pnpm check` 运行 Biome、`pnpm lint:boundaries` 和严格 TypeScript 检查。依赖检查覆盖 workspace 包方向、服务端公开入口和具体 SDK 的归属，包含纯类型导入、重导出和字面量动态导入。循环依赖由 Biome 检查，生产环境变量只能在配置入口读取。修改前后都从调用处验收职责、失败语义与资源释放，具体标准见[代码规范](docs/typescript-style-guide.md)。
+Workspace、成员和待处理邀请的列表默认返回 25 条，`limit` 可设为 1 到 100。把 `nextCursor` 作为下一次请求的 `cursor`，返回 `null` 时到达末页。
 
-E2B 已弃用的 NotFoundError 命名导入由 Biome 拦截，沙箱与文件缺失使用对应异常类型；这项定向规则不替代 SDK 升级时的类型、文档和行为核对。
+## 可观测性
 
-`db:generate` 生成迁移；`db:migrate` 应用已提交迁移。CI 会检查迁移变化，包括新生成的未跟踪文件。生产迁移单独执行，API/Worker 启动不会抢跑迁移。CI 在 PR 和 push 时执行检查、单元测试、构建、真实基础设施测试与桌面/移动浏览器测试，不发布部署。
+API 以 JSON 将启动、停止和请求日志写到标准输出。请求响应带 `X-Request-Id`。日志包含路由模板、状态码、耗时、请求 ID 和 trace ID。API 接收 W3C `traceparent`，便于和上游串联排查。
 
-## 已实现与下一步
+设置 `OTEL_EXPORTER_OTLP_ENDPOINT` 后，API 通过 OTLP HTTP/JSON 导出 Trace 和 `http.server.request.duration` 指标，例如使用 `http://localhost:4318` 连接 Collector。`OTEL_SERVICE_NAME` 默认是 `always-on-api`，`LOG_LEVEL` 默认是 `info`。日志由部署平台采集标准输出。指标按方法、路由模板和状态码统计。
 
-- 已实现：pnpm 工作区、严格 TS、Biome、独立环境解析、健康接口、公开配置、中英文 Web 页面、CLI 状态查询与本地程序检测。
-- 已实现：Google/GitHub/邮箱密码认证后端、验证与重置邮件、持久登录会话、当前用户接口和 Redis 原子限流；登录前端尚未接入。
-- 已实现：Workspace 后端、Owner/Admin/Member/Viewer、成员管理、邮箱邀请生命周期与跨空间授权，使用 Better Auth organization 的官方接口。并发与故障边界见[实现说明](docs/workspaces-and-authorization.md)。
-- 已实现：Session 消息校验、PG 原子接收与并发去重；真实 BullMQ Agent Worker 和带过期时间的 Redis Streams。
-- 已实现：云端 Agent/Session/Run、模型和推理强度选择、完整 Pi SDK、独立 E2B 沙箱、业务工具、原生会话接续、取消、PG 执行租约、Redis Streams/SSE 补流。M5 本机通过官方开源 E2B Embed + KVM 运行真实 Firecracker 沙箱；一期真实模型调用仅 DeepSeek。
-- 已实现：Workspace 内的私有会话列表、当前执行状态、稳定游标的消息历史分页，以及与 HTTP/SSE 最近消息窗口衔接；重新登录后可找回并继续原会话，当前成员权限约束所有读取。
-- 已实现：Agent 编辑、停用与空定义删除；私有 Session 命名、归档与可重试异步删除，回收绑定 E2B、全部会话 attempt 文件和持久记录。权限与失败边界见[生命周期设计](docs/adr/0003-agent-session-lifecycle.md)。
-- 已实现：显式核对未知 Run 和退组资源回收。确认前保留待核对状态和工具记录；退组回收只给管理者资源处置权限。使用方式见[云端 Agent 后端](docs/cloud-agent.md)。
-- 尚未实现：登录及 Workspace 前端、Router、长期 Task、设备连接、Timers、跨会话 Memory 整理、审批、Outbox 和对象存储。执行边界与验证范围见[云端 Agent 后端](docs/cloud-agent.md)。
+## 修改表结构
 
-Session 消息接口在同一事务提交 Inbox、queued Run 和用户消息；后台扫描 PG 再唤醒 BullMQ。未配置云端执行能力时，Worker 直接退出，API 的认证和健康接口仍可使用。
+```sh
+pnpm --filter @always-on/server db:migration:create add-inbox
+pnpm --filter @always-on/server db:migrate
+pnpm --filter @always-on/server db:types
+```
 
-## 文档
+迁移文件使用 UTC 毫秒时间戳 `YYYYMMDDHHmmssSSS` 加描述。已执行的迁移保留原名。如果分支的未执行迁移早于已执行的迁移，重新对齐主分支后再给未执行的迁移生成新时间戳。提交迁移文件和生成的表类型文件。
 
-- [架构总览](docs/architecture.md)
-- [目录与配置管理](docs/project-structure.md)
-- [TypeScript 规范](docs/typescript-style-guide.md)
-- [代码范例索引](docs/code-examples.md)
-- [后端认证接入](docs/authentication.md)
-- [工作空间与授权方案](docs/workspaces-and-authorization.md)
-- [LobeHub 团队权限与 TS 授权调研](docs/research/teams-and-authorization.md)
-- [云端 Agent 后端与 API](docs/cloud-agent.md)
-- [Agent / Session 生命周期调研](docs/research/agent-session-lifecycle.md)
-- [本机 E2B Embed 部署](deploy/e2b/README.md)
-- [沙箱研究](docs/research/sandbox-design.md)
-- [Lauren Tan 演讲全程笔记与仓库应用](docs/research/lauren-tan-agent-trust.md)
+## 开发资料
 
-`AGENTS.md` 保持简短，原始 TypeScript 指南保持完整。
+- [仓库约定](AGENTS.md)
+- [TypeScript 代码规范](docs/typescript-style-guide.md)
+- [代码范例](docs/code-examples.md)
+- [代码审查经验](docs/code-review.md)
+- [Lauren Tan 的工程环境与代码质量笔记](docs/research/lauren-tan-agent-trust.md)
+- [Biome 规则](biome.json)和 [TypeScript 基础配置](tsconfig.base.json)

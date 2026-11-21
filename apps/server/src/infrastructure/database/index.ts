@@ -1,17 +1,15 @@
-export {
-  AGENT_MESSAGES,
-  AGENT_RUNS,
-  AGENT_SESSIONS,
-  AGENT_TOOL_CALLS,
-  AGENTS,
-} from './agent-schema.js';
-export { AUTHENTICATION_TABLES } from './authentication-schema.js';
-export {
-  DATABASE_SCHEMA,
-  type Database,
-  type DatabaseResource,
-  type DatabaseTransaction,
-  openDatabase,
-} from './database.js';
-export { INBOX_EVENTS } from './schema.js';
-export { WORKSPACE_MEMBERS, WORKSPACE_TABLES } from './workspace-schema.js';
+import { Kysely, PostgresDialect, type Transaction } from 'kysely';
+import pg from 'pg';
+import type { DB } from './database.types.ts';
+
+export const DATABASE_SCHEMA = 'always_on';
+
+export type Database = Kysely<DB>;
+export type DatabaseTransaction = Transaction<DB>;
+
+/** Opens the per-process pool. Dispose the returned Kysely instance on shutdown. */
+export function openDatabase(databaseUrl: string, reportError: (error: Error) => void): Database {
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  pool.on('error', reportError);
+  return new Kysely<DB>({ dialect: new PostgresDialect({ pool }) }).withSchema(DATABASE_SCHEMA);
+}

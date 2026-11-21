@@ -1,660 +1,388 @@
 import assert from 'node:assert/strict';
-import { and, eq } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
+import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
+import pg from 'pg';
 import {
-  AUTHENTICATION_TABLES,
-  WORKSPACE_TABLES,
-} from '../../apps/server/src/infrastructure/database/index.js';
-import { openWorkspaceFixture } from './workspace-fixture.js';
+  type AccessClient,
+  expectStatus,
+  objectField,
+  responseBody,
+  textField,
+  withAccessFixture,
+} from './access-fixture.ts';
 
-const ERROR_SCHEMA = z.object({ code: z.string() });
-const PERMISSION_SCHEMA = z.object({ success: z.boolean() });
-const MEMBERS_SCHEMA = z.object({
-  members: z.array(z.object({ id: z.string(), userId: z.string(), role: z.string() })),
-  total: z.number(),
-});
+const TIMESTAMP = '2026-01-01T00:00:00.123Z';
 
-describe('workspace identity and isolation', () => {
-  it('requires a verified identity and creates the authenticated caller as owner', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, other] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('other'),
-    ]);
-    const anonymous = await fixture.request({
-      path: '/api/auth/organization/create',
-      body: { name: 'Anonymous', slug: 'anonymous' },
-    });
-    expect(anonymous.status).toBe(401);
+test('Workspace access against PostgreSQL', async (suite) => {
+  await withAccessFixture(
+    async ({ db, request, register, receivedLink, observer, databaseName, databaseUrl }) => {
+      await suite.test(
+        'uses JSON errors for malformed and oversized application requests',
+        async () => {
+          const { cookie } = await register({ email: 'transport@example.test', ip: 6 });
+          const path = '/api/workspaces';
 
-    // Simulate an existing OAuth identity whose provider has not verified its email.
-    await fixture.db
-      .update(AUTHENTICATION_TABLES.user)
-      .set({ emailVerified: false })
-      .where(eq(AUTHENTICATION_TABLES.user.id, other.id));
-    const unverified = await fixture.request({
-      path: '/api/auth/organization/create',
-      actor: other,
-      body: { name: 'Unverified', slug: `unverified-${other.id}` },
-    });
-    expect(unverified.status).toBe(403);
-    expect(ERROR_SCHEMA.parse(await unverified.json()).code).toBe(
-      'YOU_ARE_NOT_ALLOWED_TO_CREATE_A_NEW_ORGANIZATION',
-    );
+          for (const body of ['{', { name: 42 }, { name: 'bad\u0000name' }]) {
+            const invalid = await request(path, { method: 'POST', cookie, body });
+            await expectStatus(invalid, 400);
+            assert.deepEqual(await invalid.json(), { error: 'invalid_input' });
+          }
 
-    const workspace = await fixture.createWorkspace({ actor: owner, label: 'identity' });
-    const members = await fixture.request({
-      path: `/api/auth/organization/list-members?organizationId=${workspace.id}`,
-      actor: owner,
-      method: 'GET',
-    });
-    expect(MEMBERS_SCHEMA.parse(await members.json()).members).toEqual([
-      expect.objectContaining({ userId: owner.id, role: 'owner' }),
-    ]);
-    const foreign = await fixture.request({
-      path: '/api/auth/organization/list',
-      actor: other,
-      method: 'GET',
-    });
-    expect(await foreign.json()).toEqual([]);
-    const forgedActor = await fixture.request({
-      path: '/api/auth/organization/update',
-      actor: other,
-      body: { organizationId: workspace.id, userId: owner.id, data: { name: 'Forged' } },
-    });
-    expect(forgedActor.status).toBe(400);
-    expect(ERROR_SCHEMA.parse(await forgedActor.json()).code).toBe(
-      'USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION',
-    );
-    const savedWorkspace = await fixture.db.query.organization.findFirst({
-      where: eq(WORKSPACE_TABLES.organization.id, workspace.id),
-    });
-    expect(savedWorkspace?.name).toBe('identity');
-  });
+          const large = await request(path, {
+            method: 'POST',
+            cookie,
+            body: { name: 'x'.repeat(16_384) },
+          });
+          await expectStatus(large, 413);
+          assert.deepEqual(await large.json(), { error: 'request_too_large' });
 
-  it('checks explicit workspace membership even when another workspace is active', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, viewer] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('viewer'),
-    ]);
-    const first = await fixture.createWorkspace({ actor: owner, label: 'first' });
-    const second = await fixture.createWorkspace({ actor: owner, label: 'second' });
-    const viewerMembership = await fixture.join({
-      actor: owner,
-      organizationId: first.id,
-      recipient: viewer,
-      role: 'viewer',
-    });
-    const allowed = await fixture.request({
-      path: `/api/auth/organization/get-organization?organizationId=${first.id}`,
-      actor: viewer,
-      method: 'GET',
-    });
-    expect(allowed.status).toBe(200);
-    const denied = await fixture.request({
-      path: '/api/auth/organization/has-permission',
-      actor: viewer,
-      body: { organizationId: second.id, permissions: { organization: ['update'] } },
-    });
-    expect(denied.status).toBe(401);
-    const foreignRoleChange = await fixture.request({
-      path: '/api/auth/organization/update-member-role',
-      actor: owner,
-      body: { organizationId: second.id, memberId: viewerMembership.id, role: 'admin' },
-    });
-    expect(foreignRoleChange.status).toBe(403);
-    expect(ERROR_SCHEMA.parse(await foreignRoleChange.json()).code).toBe(
-      'YOU_ARE_NOT_ALLOWED_TO_UPDATE_THIS_MEMBER',
-    );
-    const foreignRemoval = await fixture.request({
-      path: '/api/auth/organization/remove-member',
-      actor: owner,
-      body: { organizationId: second.id, memberIdOrEmail: viewerMembership.id },
-    });
-    expect(foreignRemoval.status).toBe(400);
-    const selected = await fixture.request({
-      path: '/api/auth/organization/set-active',
-      actor: owner,
-      body: { organizationId: second.id },
-    });
-    expect(selected.status).toBe(200);
-    const updateFirst = await fixture.request({
-      path: '/api/auth/organization/update',
-      actor: owner,
-      body: { organizationId: first.id, data: { name: 'First updated' } },
-    });
-    expect(updateFirst.status).toBe(200);
-    const workspaces = await fixture.db
-      .select()
-      .from(WORKSPACE_TABLES.organization)
-      .where(eq(WORKSPACE_TABLES.organization.id, second.id));
-    expect(workspaces.at(0)?.name).toBe('second');
-  });
-});
-
-describe('workspace roles', () => {
-  it('enforces the four roles and preserves SDK role combinations', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, admin, member, viewer] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('admin'),
-      fixture.createActor('member'),
-      fixture.createActor('viewer'),
-    ]);
-    const workspace = await fixture.createWorkspace({ actor: owner, label: 'roles' });
-    const memberships = await Promise.all([
-      fixture.join({ actor: owner, organizationId: workspace.id, recipient: admin, role: 'admin' }),
-      fixture.join({
-        actor: owner,
-        organizationId: workspace.id,
-        recipient: member,
-        role: 'member',
-      }),
-      fixture.join({
-        actor: owner,
-        organizationId: workspace.id,
-        recipient: viewer,
-        role: 'viewer',
-      }),
-    ]);
-    for (const { actor, canUpdate, canDelete } of [
-      { actor: owner, canUpdate: true, canDelete: true },
-      { actor: admin, canUpdate: true, canDelete: false },
-      { actor: member, canUpdate: false, canDelete: false },
-      { actor: viewer, canUpdate: false, canDelete: false },
-    ]) {
-      for (const { action, expected } of [
-        { action: 'update', expected: canUpdate },
-        { action: 'delete', expected: canDelete },
-      ]) {
-        const permission = await fixture.request({
-          path: '/api/auth/organization/has-permission',
-          actor,
-          body: { organizationId: workspace.id, permissions: { organization: [action] } },
-        });
-        expect(permission.status).toBe(200);
-        expect(PERMISSION_SCHEMA.parse(await permission.json()).success).toBe(expected);
-      }
-      const listing = await fixture.request({
-        path: `/api/auth/organization/list-members?organizationId=${workspace.id}`,
-        actor,
-        method: 'GET',
-      });
-      expect(listing.status).toBe(200);
-      expect(MEMBERS_SCHEMA.parse(await listing.json()).total).toBe(4);
-    }
-    const viewerMembership = memberships.at(2);
-    assert.ok(viewerMembership);
-    const combination = await fixture.request({
-      path: '/api/auth/organization/update-member-role',
-      actor: owner,
-      body: {
-        organizationId: workspace.id,
-        memberId: viewerMembership.id,
-        role: ['viewer', 'admin'],
-      },
-    });
-    expect(combination.status).toBe(200);
-    const combinedPermission = await fixture.request({
-      path: '/api/auth/organization/has-permission',
-      actor: viewer,
-      body: { organizationId: workspace.id, permissions: { invitation: ['create'] } },
-    });
-    expect(PERMISSION_SCHEMA.parse(await combinedPermission.json()).success).toBe(true);
-    const ownerMember = await fixture.db.query.member.findFirst({
-      where: and(
-        eq(WORKSPACE_TABLES.member.organizationId, workspace.id),
-        eq(WORKSPACE_TABLES.member.userId, owner.id),
-      ),
-    });
-    assert.ok(ownerMember);
-    const ownerDemotion = await fixture.request({
-      path: '/api/auth/organization/update-member-role',
-      actor: admin,
-      body: { organizationId: workspace.id, memberId: ownerMember.id, role: 'member' },
-    });
-    expect(ownerDemotion.status).toBe(403);
-    const adminDeletion = await fixture.request({
-      path: '/api/auth/organization/delete',
-      actor: admin,
-      body: { organizationId: workspace.id },
-    });
-    expect(adminDeletion.status).toBe(403);
-  });
-
-  it('applies role changes and removal to existing login sessions immediately', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, admin] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('admin'),
-    ]);
-    const workspace = await fixture.createWorkspace({ actor: owner, label: 'revocation' });
-    const membership = await fixture.join({
-      actor: owner,
-      organizationId: workspace.id,
-      recipient: admin,
-      role: 'admin',
-    });
-    const demoted = await fixture.request({
-      path: '/api/auth/organization/update-member-role',
-      actor: owner,
-      body: { organizationId: workspace.id, memberId: membership.id, role: 'viewer' },
-    });
-    expect(demoted.status).toBe(200);
-    const revoked = await fixture.request({
-      path: '/api/auth/organization/update',
-      actor: admin,
-      body: { organizationId: workspace.id, data: { name: 'Revoked' } },
-    });
-    expect(revoked.status).toBe(403);
-    const removal = await fixture.request({
-      path: '/api/auth/organization/remove-member',
-      actor: owner,
-      body: { organizationId: workspace.id, memberIdOrEmail: membership.id },
-    });
-    expect(removal.status).toBe(200);
-    const removed = await fixture.request({
-      path: `/api/auth/organization/list-members?organizationId=${workspace.id}`,
-      actor: admin,
-      method: 'GET',
-    });
-    expect(removed.status).toBe(403);
-  });
-});
-
-describe('workspace invitations', () => {
-  it('delivers a recipient-bound seven-day invitation and accepts it only once under concurrency', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, recipient, stranger] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('recipient'),
-      fixture.createActor('stranger'),
-    ]);
-    const workspace = await fixture.createWorkspace({ actor: owner, label: 'invitations' });
-    const requestedAtMs = Date.now();
-    const invitation = await fixture.invite({
-      actor: owner,
-      organizationId: workspace.id,
-      email: recipient.email,
-      role: 'viewer',
-    });
-    const acknowledgedAtMs = Date.now();
-    const message = await fixture.readEmail({
-      to: recipient.email,
-      subject: `Join ${workspace.name}`,
-    });
-    const link = message.text.match(/https?:\/\/\S+/)?.[0];
-    assert.ok(link);
-    const invitationUrl = new URL(link);
-    expect(invitationUrl.pathname).toBe('/api/auth/organization/get-invitation');
-    expect(invitationUrl.searchParams.get('id')).toBe(invitation.id);
-    const stored = await fixture.db.query.invitation.findFirst({
-      where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
-    });
-    assert.ok(stored);
-    // The SDK reads the clock separately for expiry and creation; assert the policy at its request boundary.
-    const validityMs = 7 * 24 * 60 * 60 * 1_000;
-    expect(stored.expiresAt.getTime()).toBeGreaterThanOrEqual(requestedAtMs + validityMs);
-    expect(stored.expiresAt.getTime()).toBeLessThanOrEqual(acknowledgedAtMs + validityMs);
-    const details = await fixture.request({ path: link, actor: recipient, method: 'GET' });
-    expect(details.status).toBe(200);
-    const reviewed = await fixture.db.query.invitation.findFirst({
-      where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
-    });
-    expect(reviewed?.status).toBe('pending');
-    const wrongRecipient = await fixture.request({
-      path: '/api/auth/organization/accept-invitation',
-      actor: stranger,
-      body: { invitationId: invitation.id },
-    });
-    expect(wrongRecipient.status).toBe(403);
-    const input = {
-      path: '/api/auth/organization/accept-invitation',
-      actor: recipient,
-      body: { invitationId: invitation.id },
-    };
-    const outcomes = await Promise.all([fixture.request(input), fixture.request(input)]);
-    expect(outcomes.map((response) => response.status).toSorted()).toEqual([200, 400]);
-    expect((await fixture.request(input)).status).toBe(400);
-    const membership = await fixture.db
-      .select()
-      .from(WORKSPACE_TABLES.member)
-      .where(
-        and(
-          eq(WORKSPACE_TABLES.member.organizationId, workspace.id),
-          eq(WORKSPACE_TABLES.member.userId, recipient.id),
-        ),
+          const cursor = Buffer.from(
+            JSON.stringify({
+              time: '0000-01-01T00:00:00.000Z',
+              id: randomUUID(),
+            }),
+          ).toString('base64url');
+          const invalidCursor = await request(`${path}?cursor=${cursor}`, { cookie });
+          await expectStatus(invalidCursor, 400);
+          assert.deepEqual(await invalidCursor.json(), { error: 'invalid_input' });
+        },
       );
-    expect(membership).toEqual([expect.objectContaining({ role: 'viewer' })]);
-  });
 
-  it('requires verified email at invitation review and acceptance', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, recipient] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('recipient'),
-    ]);
-    const workspace = await fixture.createWorkspace({ actor: owner, label: 'verification' });
-    const invitation = await fixture.invite({
-      actor: owner,
-      organizationId: workspace.id,
-      email: recipient.email,
-      role: 'member',
-    });
-    await fixture.db
-      .update(AUTHENTICATION_TABLES.user)
-      .set({ emailVerified: false })
-      .where(eq(AUTHENTICATION_TABLES.user.id, recipient.id));
-    const review = await fixture.request({
-      path: `/api/auth/organization/get-invitation?id=${invitation.id}`,
-      actor: recipient,
-      method: 'GET',
-    });
-    expect(review.status).toBe(403);
-    const accept = await fixture.request({
-      path: '/api/auth/organization/accept-invitation',
-      actor: recipient,
-      body: { invitationId: invitation.id },
-    });
-    expect(accept.status).toBe(403);
-    expect(ERROR_SCHEMA.parse(await accept.json()).code).toBe(
-      'EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION',
-    );
-    const stored = await fixture.db.query.invitation.findFirst({
-      where: eq(WORKSPACE_TABLES.invitation.id, invitation.id),
-    });
-    expect(stored?.status).toBe('pending');
-  });
+      await suite.test(
+        'Workspace permissions, invitation ownership, and cursor pagination',
+        async () => {
+          const [owner, member, outsider] = await Promise.all([
+            register({ email: 'owner@example.test', ip: 3 }),
+            register({ email: 'member@example.test', ip: 4 }),
+            register({ email: 'outsider@example.test', ip: 5 }),
+          ]);
 
-  it('supports cancellation, rejection, expiration and explicit resend without granting membership', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, recipient] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('recipient'),
-    ]);
-    const workspace = await fixture.createWorkspace({
-      actor: owner,
-      label: 'invitation-lifecycle',
-    });
-    const invite = () =>
-      fixture.invite({
-        actor: owner,
-        organizationId: workspace.id,
-        email: recipient.email,
-        role: 'member',
-      });
-    const cancelled = await invite();
-    const cancellation = await fixture.request({
-      path: '/api/auth/organization/cancel-invitation',
-      actor: owner,
-      body: { invitationId: cancelled.id },
-    });
-    expect(cancellation.status).toBe(200);
-    const cancelledAcceptance = await fixture.request({
-      path: '/api/auth/organization/accept-invitation',
-      actor: recipient,
-      body: { invitationId: cancelled.id },
-    });
-    expect(cancelledAcceptance.status).toBe(400);
-    const rejected = await invite();
-    const rejection = await fixture.request({
-      path: '/api/auth/organization/reject-invitation',
-      actor: recipient,
-      body: { invitationId: rejected.id },
-    });
-    expect(rejection.status).toBe(200);
-    const expiring = await invite();
-    const originalDeadline = new Date(Date.now() + 60_000);
-    await fixture.db
-      .update(WORKSPACE_TABLES.invitation)
-      .set({ expiresAt: originalDeadline })
-      .where(eq(WORKSPACE_TABLES.invitation.id, expiring.id));
-    const resent = await fixture.invite({
-      actor: owner,
-      organizationId: workspace.id,
-      email: recipient.email,
-      role: 'member',
-      resend: true,
-    });
-    expect(resent.status).toBe('pending');
-    expect(resent.id).toBe(expiring.id);
-    const refreshed = await fixture.db.query.invitation.findFirst({
-      where: eq(WORKSPACE_TABLES.invitation.id, resent.id),
-    });
-    assert.ok(refreshed);
-    expect(refreshed.expiresAt.getTime()).toBeGreaterThan(originalDeadline.getTime());
-    await fixture.db
-      .update(WORKSPACE_TABLES.invitation)
-      .set({ expiresAt: new Date('2020-01-01') })
-      .where(eq(WORKSPACE_TABLES.invitation.id, resent.id));
-    const expiredAcceptance = await fixture.request({
-      path: '/api/auth/organization/accept-invitation',
-      actor: recipient,
-      body: { invitationId: resent.id },
-    });
-    expect(expiredAcceptance.status).toBe(400);
-    const replacement = await invite();
-    const replacementAcceptance = await fixture.request({
-      path: '/api/auth/organization/accept-invitation',
-      actor: recipient,
-      body: { invitationId: replacement.id },
-    });
-    expect(replacementAcceptance.status).toBe(200);
-  });
+          const create = async (name: string) => {
+            const response = await request('/api/workspaces', {
+              method: 'POST',
+              cookie: owner.cookie,
+              body: { name, userId: outsider.userId },
+            });
+            await expectStatus(response, 201);
+            const workspace = objectField((await responseBody(response)).workspace);
+            assert.equal(workspace.role, 'owner');
+            return textField(workspace.id);
+          };
 
-  it('denies invitation management to members and viewers', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, member, viewer] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('member'),
-      fixture.createActor('viewer'),
-    ]);
-    const workspace = await fixture.createWorkspace({
-      actor: owner,
-      label: 'invitation-permissions',
-    });
-    await Promise.all([
-      fixture.join({
-        actor: owner,
-        organizationId: workspace.id,
-        recipient: member,
-        role: 'member',
-      }),
-      fixture.join({
-        actor: owner,
-        organizationId: workspace.id,
-        recipient: viewer,
-        role: 'viewer',
-      }),
-    ]);
-    const pending = await fixture.invite({
-      actor: owner,
-      organizationId: workspace.id,
-      email: `${owner.id}@example.com`,
-      role: 'member',
-    });
-    for (const actor of [member, viewer]) {
-      const invite = await fixture.request({
-        path: '/api/auth/organization/invite-member',
-        actor,
-        body: { organizationId: workspace.id, email: 'new@example.com', role: 'member' },
-      });
-      expect(invite.status).toBe(403);
-      const cancel = await fixture.request({
-        path: '/api/auth/organization/cancel-invitation',
-        actor,
-        body: { invitationId: pending.id },
-      });
-      expect(cancel.status).toBe(403);
-      const list = await fixture.request({
-        path: `/api/auth/organization/list-invitations?organizationId=${workspace.id}`,
-        actor,
-        method: 'GET',
-      });
-      expect(list.status).toBe(403);
-      const details = await fixture.request({
-        path: `/api/auth/organization/get-full-organization?organizationId=${workspace.id}`,
-        actor,
-        method: 'GET',
-      });
-      expect(details.status).toBe(200);
-      expect(
-        z.object({ invitations: z.array(z.unknown()) }).parse(await details.json()).invitations,
-      ).toEqual([]);
-    }
-  });
-});
+          const workspaceId = await create('One');
+          const secondId = await create('Two');
+          const path = `/api/workspaces/${workspaceId}`;
+          await db.updateTable('workspaces').set({ created_at: TIMESTAMP }).execute();
 
-describe('workspace lifecycle', () => {
-  it.each(['leave', 'update-member-role'] as const)(
-    'retains an owner when two owners concurrently %s',
-    async (operation) => {
-      await using fixture = await openWorkspaceFixture();
-      const [first, second] = await Promise.all([
-        fixture.createActor('first'),
-        fixture.createActor('second'),
-      ]);
-      const workspace = await fixture.createWorkspace({ actor: first, label: 'concurrent-owners' });
-      await fixture.join({
-        actor: first,
-        organizationId: workspace.id,
-        recipient: second,
-        role: 'owner',
-      });
-      const members = await fixture.db.query.member.findMany({
-        where: eq(WORKSPACE_TABLES.member.organizationId, workspace.id),
-      });
-      const responses = await Promise.all([first, second].map(removeOwner));
-      expect(responses.map((response) => response.status).toSorted()).toEqual([200, 400]);
-      const remaining = await fixture.db.query.member.findMany({
-        where: eq(WORKSPACE_TABLES.member.organizationId, workspace.id),
-      });
-      expect(remaining.filter((member) => member.role === 'owner')).toHaveLength(1);
+          await expectStatus(await request(path, { cookie: outsider.cookie }), 404);
+          await expectStatus(
+            await request(path, {
+              method: 'PATCH',
+              cookie: owner.cookie,
+              origin: 'https://example.test',
+              body: { name: 'New' },
+            }),
+            403,
+          );
+          await expectStatus(
+            await request(`${path}/membership`, { method: 'DELETE', cookie: owner.cookie }),
+            409,
+          );
 
-      function removeOwner(actor: typeof first) {
-        const member = members.find((candidate) => candidate.userId === actor.id);
-        assert.ok(member);
-        const body =
-          operation === 'leave'
-            ? { organizationId: workspace.id }
-            : { organizationId: workspace.id, memberId: member.id, role: 'member' };
-        return fixture.request({ path: `/api/auth/organization/${operation}`, actor, body });
-      }
+          const listed = await readTwoPages(request, {
+            path: '/api/workspaces',
+            collection: 'workspaces',
+            cookie: owner.cookie,
+          });
+          assert.deepEqual(listed.map(({ id }) => id).sort(), [workspaceId, secondId].sort());
+          await expectStatus(
+            await request('/api/workspaces?limit=101', { cookie: owner.cookie }),
+            400,
+          );
+          await expectStatus(
+            await request('/api/workspaces?cursor=bad', { cookie: owner.cookie }),
+            400,
+          );
+
+          const issue = async (email: string) => {
+            const response = await request(`${path}/invitations`, {
+              method: 'POST',
+              cookie: owner.cookie,
+              body: { email, role: 'member' },
+            });
+            await expectStatus(response, 201);
+            const body = await responseBody(response);
+            assert.equal(body.delivery, 'sent');
+            const invitation = objectField(body.invitation);
+            assert.equal('token' in invitation, false);
+            return textField(invitation.id);
+          };
+
+          const cancelled = await issue('cancel@example.test');
+          const accepted = await issue('member@example.test');
+          const invitations = await readTwoPages(request, {
+            path: `${path}/invitations`,
+            collection: 'invitations',
+            cookie: owner.cookie,
+          });
+          assert.deepEqual(invitations.map(({ id }) => id).sort(), [cancelled, accepted].sort());
+
+          const cancel = { method: 'DELETE', cookie: owner.cookie };
+          await expectStatus(
+            await request(`/api/workspaces/${secondId}/invitations/${cancelled}`, cancel),
+            404,
+          );
+          await expectStatus(await request(`${path}/invitations/${cancelled}`, cancel), 204);
+          await expectStatus(await request(`${path}/invitations/${cancelled}`, cancel), 404);
+
+          const link = receivedLink('member@example.test');
+          await expectStatus(
+            await request(link.pathname + link.search, { cookie: outsider.cookie }),
+            404,
+          );
+          await expectStatus(
+            await request(link.pathname + link.search, { cookie: member.cookie }),
+            200,
+          );
+
+          const accept = () =>
+            request('/api/workspaces/invitations/accept', {
+              method: 'POST',
+              cookie: member.cookie,
+              body: { token: link.searchParams.get('token') },
+            });
+          const attempts = await Promise.all([accept(), accept()]);
+          assert.deepEqual(attempts.map(({ status }) => status).sort(), [200, 409]);
+
+          await db.updateTable('workspace_members').set({ joined_at: TIMESTAMP }).execute();
+          const members = await readTwoPages(request, {
+            path: `${path}/members`,
+            collection: 'members',
+            cookie: owner.cookie,
+          });
+          assert.deepEqual(
+            members.map(({ userId }) => userId).sort(),
+            [owner.userId, member.userId].sort(),
+          );
+          await expectStatus(
+            await request(path, {
+              method: 'PATCH',
+              cookie: member.cookie,
+              body: { name: 'New' },
+            }),
+            403,
+          );
+
+          const rolePath = `${path}/members/${member.userId}`;
+          await expectStatus(
+            await request(rolePath, {
+              method: 'PATCH',
+              cookie: owner.cookie,
+              body: { role: 'admin' },
+            }),
+            204,
+          );
+          await expectStatus(
+            await request(path, {
+              method: 'PATCH',
+              cookie: member.cookie,
+              body: { name: 'Renamed' },
+            }),
+            200,
+          );
+          await expectStatus(
+            await request(`${path}/members/${owner.userId}`, {
+              method: 'DELETE',
+              cookie: member.cookie,
+            }),
+            403,
+          );
+
+          const expired = await issue('outsider@example.test');
+          const expiredToken = receivedLink('outsider@example.test').searchParams.get('token');
+          await db
+            .updateTable('workspace_invitations')
+            .set({ expires_at: TIMESTAMP })
+            .where('id', '=', expired)
+            .execute();
+          const acceptAsOutsider = (token: string | null) =>
+            request('/api/workspaces/invitations/accept', {
+              method: 'POST',
+              cookie: outsider.cookie,
+              body: { token },
+            });
+          const expiredResponse = await acceptAsOutsider(expiredToken);
+          await expectStatus(expiredResponse, 409);
+          assert.deepEqual(await expiredResponse.json(), { error: 'invitation_used' });
+          assert.notEqual(await issue('outsider@example.test'), expired);
+          await expectStatus(await acceptAsOutsider(expiredToken), 409);
+          await expectStatus(
+            await acceptAsOutsider(receivedLink('outsider@example.test').searchParams.get('token')),
+            200,
+          );
+
+          const target = `${path}/members/${outsider.userId}`;
+          await expectStatus(
+            await request(target, {
+              method: 'PATCH',
+              cookie: member.cookie,
+              body: { role: 'admin' },
+            }),
+            403,
+          );
+          await expectStatus(
+            await request(target, {
+              method: 'PATCH',
+              cookie: member.cookie,
+              body: { role: 'viewer' },
+            }),
+            204,
+          );
+          await expectStatus(
+            await request(target, { method: 'DELETE', cookie: member.cookie }),
+            204,
+          );
+          await expectStatus(await request(path, { cookie: outsider.cookie }), 404);
+
+          await checkQueuedRename({
+            observer,
+            databaseName,
+            databaseUrl,
+            request,
+            workspaceId,
+            member,
+          });
+
+          await expectStatus(
+            await request(rolePath, {
+              method: 'PATCH',
+              cookie: owner.cookie,
+              body: { role: 'owner' },
+            }),
+            204,
+          );
+          const cookies = [owner.cookie, member.cookie];
+          const leaves = await Promise.all(
+            cookies.map((cookie) => request(`${path}/membership`, { method: 'DELETE', cookie })),
+          );
+          assert.deepEqual(leaves.map(({ status }) => status).sort(), [204, 409]);
+          for (const [index, cookie] of cookies.entries()) {
+            await expectStatus(
+              await request(path, { cookie }),
+              leaves[index]?.status === 204 ? 404 : 200,
+            );
+          }
+        },
+      );
     },
+    { defaultIsolation: 'repeatable read' },
   );
-
-  it('protects the last owner and supports ownership handover before leaving', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const [owner, successor] = await Promise.all([
-      fixture.createActor('owner'),
-      fixture.createActor('successor'),
-    ]);
-    const workspace = await fixture.createWorkspace({ actor: owner, label: 'handover' });
-    const successorMember = await fixture.join({
-      actor: owner,
-      organizationId: workspace.id,
-      recipient: successor,
-      role: 'member',
-    });
-    const lastOwner = await fixture.request({
-      path: '/api/auth/organization/leave',
-      actor: owner,
-      body: { organizationId: workspace.id },
-    });
-    expect(lastOwner.status).toBe(400);
-    expect(ERROR_SCHEMA.parse(await lastOwner.json()).code).toBe(
-      'YOU_CANNOT_LEAVE_THE_ORGANIZATION_AS_THE_ONLY_OWNER',
-    );
-    const promote = await fixture.request({
-      path: '/api/auth/organization/update-member-role',
-      actor: owner,
-      body: { organizationId: workspace.id, memberId: successorMember.id, role: 'owner' },
-    });
-    expect(promote.status).toBe(200);
-    const departure = await fixture.request({
-      path: '/api/auth/organization/leave',
-      actor: owner,
-      body: { organizationId: workspace.id },
-    });
-    expect(departure.status).toBe(200);
-    const remaining = await fixture.request({
-      path: `/api/auth/organization/list-members?organizationId=${workspace.id}`,
-      actor: successor,
-      method: 'GET',
-    });
-    expect(MEMBERS_SCHEMA.parse(await remaining.json()).members).toEqual([
-      expect.objectContaining({ userId: successor.id, role: 'owner' }),
-    ]);
-  });
-
-  it('deletes workspace records, invitations and memberships and clears the caller selection', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const owner = await fixture.createActor('owner');
-    const workspace = await fixture.createWorkspace({ actor: owner, label: 'deletion' });
-    await fixture.invite({
-      actor: owner,
-      organizationId: workspace.id,
-      email: 'pending@example.com',
-      role: 'member',
-    });
-    const deleted = await fixture.request({
-      path: '/api/auth/organization/delete',
-      actor: owner,
-      body: { organizationId: workspace.id },
-    });
-    expect(deleted.status).toBe(200);
-    const [members, invitations, spaces, sessions] = await Promise.all([
-      fixture.db
-        .select()
-        .from(WORKSPACE_TABLES.member)
-        .where(eq(WORKSPACE_TABLES.member.organizationId, workspace.id)),
-      fixture.db
-        .select()
-        .from(WORKSPACE_TABLES.invitation)
-        .where(eq(WORKSPACE_TABLES.invitation.organizationId, workspace.id)),
-      fixture.db
-        .select()
-        .from(WORKSPACE_TABLES.organization)
-        .where(eq(WORKSPACE_TABLES.organization.id, workspace.id)),
-      fixture.db
-        .select()
-        .from(AUTHENTICATION_TABLES.session)
-        .where(eq(AUTHENTICATION_TABLES.session.userId, owner.id)),
-    ]);
-    expect(members).toEqual([]);
-    expect(invitations).toEqual([]);
-    expect(spaces).toEqual([]);
-    expect(sessions.every((session) => session.activeOrganizationId === null)).toBe(true);
-  });
-
-  it('keeps organization writes behind the existing origin and trusted server boundaries', async () => {
-    await using fixture = await openWorkspaceFixture();
-    const owner = await fixture.createActor('owner');
-    const workspace = await fixture.createWorkspace({ actor: owner, label: 'boundaries' });
-    const crossOrigin = await fixture.request({
-      path: '/api/auth/organization/update',
-      actor: owner,
-      origin: 'https://foreign.example.com',
-      body: { organizationId: workspace.id, data: { name: 'Untrusted' } },
-    });
-    expect(crossOrigin.status).toBe(403);
-    fixture.expectErrors(['Authentication: Invalid origin: https://foreign.example.com']);
-    const addMember = await fixture.request({
-      path: '/api/auth/organization/add-member',
-      actor: owner,
-      body: { organizationId: workspace.id, userId: owner.id, role: 'owner' },
-    });
-    expect(addMember.status).toBe(404);
-    const ownList = await fixture.request({
-      path: '/api/auth/organization/list',
-      actor: owner,
-      method: 'GET',
-    });
-    expect(ownList.headers.get('cache-control')).toBe('no-store');
-    expect(z.array(z.object({ id: z.string() })).parse(await ownList.json())).toEqual([
-      { id: workspace.id },
-    ]);
-  });
 });
+
+async function checkQueuedRename({
+  observer,
+  databaseName,
+  databaseUrl,
+  request,
+  workspaceId,
+  member,
+}: {
+  observer: pg.Client;
+  databaseName: string;
+  databaseUrl: string;
+  request: AccessClient;
+  workspaceId: string;
+  member: { userId: string; cookie: string };
+}) {
+  const lock = new pg.Client({ connectionString: databaseUrl });
+  await lock.connect();
+  try {
+    await lock.query('BEGIN');
+    await lock.query('SELECT id FROM always_on.workspaces WHERE id = $1 FOR UPDATE', [workspaceId]);
+
+    const [response, revocation] = await Promise.allSettled([
+      request(`/api/workspaces/${workspaceId}`, {
+        method: 'PATCH',
+        cookie: member.cookie,
+        body: { name: 'Stale authorization' },
+      }),
+      revokeAfterRenameWaits(),
+    ]);
+    if (revocation.status === 'rejected') throw revocation.reason;
+    if (response.status === 'rejected') throw response.reason;
+    await expectStatus(response.value, 403);
+    const saved = await request(`/api/workspaces/${workspaceId}`, { cookie: member.cookie });
+    await expectStatus(saved, 200);
+    assert.equal(objectField((await responseBody(saved)).workspace).name, 'Renamed');
+  } finally {
+    await lock.end();
+  }
+
+  async function revokeAfterRenameWaits() {
+    try {
+      await waitForWorkspaceLock({ observer, databaseName });
+      await lock.query(
+        "UPDATE always_on.workspace_members SET role = 'viewer' WHERE workspace_id = $1 AND user_id = $2",
+        [workspaceId, member.userId],
+      );
+      await lock.query('COMMIT');
+    } catch (error) {
+      await lock.query('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+async function waitForWorkspaceLock({
+  observer,
+  databaseName,
+}: {
+  observer: pg.Client;
+  databaseName: string;
+}) {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const result = await observer.query<{ waiting: boolean }>(
+      `SELECT EXISTS (
+        SELECT 1 FROM pg_stat_activity
+        WHERE datname = $1 AND wait_event_type = 'Lock' AND query LIKE '%"workspaces"%for update%'
+      ) AS waiting`,
+      [databaseName],
+    );
+    if (result.rows[0]?.waiting) return;
+    await delay(10);
+  }
+  throw new Error('The rename did not reach the Workspace lock');
+}
+
+async function readTwoPages(
+  request: AccessClient,
+  {
+    path,
+    collection,
+    cookie,
+  }: {
+    path: string;
+    collection: 'workspaces' | 'members' | 'invitations';
+    cookie: string;
+  },
+) {
+  const first = await request(`${path}?limit=1`, { cookie });
+  await expectStatus(first, 200);
+  const firstPage = await responseBody(first);
+  const rows = firstPage[collection];
+  assert.ok(Array.isArray(rows));
+  assert.equal(rows.length, 1);
+
+  const cursor = textField(firstPage.nextCursor);
+  const second = await request(`${path}?limit=1&cursor=${cursor}`, { cookie });
+  await expectStatus(second, 200);
+  const lastPage = await responseBody(second);
+  const remaining = lastPage[collection];
+  assert.ok(Array.isArray(remaining));
+  assert.equal(remaining.length, 1);
+  assert.equal(lastPage.nextCursor, null);
+
+  return [objectField(rows[0]), objectField(remaining[0])];
+}

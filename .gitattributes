@@ -1,2 +1,0 @@
-# Unified diff context contains space-prefixed tabs that must remain byte-for-byte intact.
-patches/*.patch -whitespace

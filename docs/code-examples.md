@@ -1,67 +1,80 @@
-# 代码范例索引
+# 代码范例
 
-按正在修改的职责选择范例，先读入口，再读相关实现、调用处和测试。这里参考的是职责划分、阅读顺序与资源归属，具体行为仍由当前需求和 [TypeScript 规范](typescript-style-guide.md) 决定。
+## 事务回调放在操作入口
 
-链接直接指向维护中的源码；跨功能调用仍通过对应模块的公开入口。修改范例时同步核对说明，替换旧实现时更新索引。
+下面的操作放在 `document-store.ts`，由它拥有 ORM 和事务。当回调体是这项持久化操作的唯一主线，就地写清权限检查、查询和返回。业务入口通过这项具名操作读取数据。
 
-## HTTP 路由：注册与处理分开阅读
+```ts
+export function listDocuments({
+  db,
+  folderId,
+  userId,
+}: ListDocumentsInput): Promise<readonly Document[] | null> {
+  return db.transaction(async (transaction) => {
+    const folder = await readAccessibleFolder({ transaction, folderId, userId });
+    if (!folder) return null;
 
-阅读 [agents/routes.ts](../apps/server/src/agents/routes.ts) 的 `createAgentRoutes`，以及其中的 `list`、`create`。
+    return readDocuments({ transaction, folderId: folder.id });
+  });
+}
+```
 
-路由注册集中展示方法、路径和校验器；具名处理函数放在主流程之后，捕获当前依赖。处理函数按解析输入、调用应用操作、映射 HTTP 结果展开。事务和授权规则由被调用模块负责。
+## 注册和执行各有清楚的阅读顺序
 
-适合普通请求与响应路由。流订阅有独立生命周期，不能直接套用普通请求的结束规则。
+当注册处有多条路由或事件，具名处理函数让调用表保持紧凑。处理函数可以捕获当前依赖，并依次解析输入、调用业务操作、映射结果。独立的转换函数放在模块级。
 
-验证参考：[execution.test.ts](../tests/integration/execution.test.ts) 中的真实认证与受保护端点用例，以及 [agents.test.ts](../tests/integration/agents.test.ts) 中的可见性和权限用例。
+```ts
+export function registerDocumentRoutes(routes: Routes, documents: DocumentStore): void {
+  routes.get('/documents/:id', getDocument);
+  routes.delete('/documents/:id', deleteDocument);
 
-## 数据库事务：入口拥有完整接收规则
+  async function getDocument(request: RequestContext) {
+    const id = parseDocumentId(request.params.id);
+    const document = await documents.read(id);
 
-阅读 [sessions/store.ts](../apps/server/src/sessions/store.ts) 的 `submitSessionMessage`、`readRepeatedSubmission` 和 `recordSessionInput`，连同 [sessions/access.ts](../apps/server/src/sessions/access.ts) 的 `readSessionAccess`；调用处是 [sessions/routes.ts](../apps/server/src/sessions/routes.ts) 的 `submit`。
+    return document ? request.json(document) : request.notFound();
+  }
 
-入口明确事务范围，具名事务操作按权限与锁、重复输入、恢复阻断、原子写入展开。重复输入先于恢复阻断判断，保证重试仍能返回原 Run。Inbox、Run、用户消息和展示版本一起提交，路由无需协调表和锁的顺序。
+  async function deleteDocument(request: RequestContext) {
+    const id = parseDocumentId(request.params.id);
+    const deleted = await documents.remove(id);
 
-辅助函数按完整职责提取；决定事务语义的检查顺序仍在主流程可见。访问模块同时供列表、历史和写入事务使用，集中私有归属与当前成员权限。新业务应根据自身一致性要求确定事务与锁范围。
+    return deleted ? request.noContent() : request.notFound();
+  }
+}
+```
 
-验证参考：[agents.test.ts](../tests/integration/agents.test.ts) 的并发去重、跨 Session 来源隔离及配置快照用例。
+## 词法作用域表达资源释放时机
 
-## 有状态资源：执行编排与所有权维护各有归属
+需要在释放资源后提交结果时，让作用域明确结束边界。资源模块负责关闭与取消，执行入口负责决定结果何时可以提交。
 
-阅读 [tasks/execute.ts](../apps/server/src/tasks/execute.ts) 的 `executeQueuedRun` 和 `RunControl`；调用处是 [tasks/worker.ts](../apps/server/src/tasks/worker.ts) 的 `processJob` 和 `executeRun`。
+```ts
+export async function prepareReport(input: ReportInput): Promise<Report> {
+  let report: Report;
+  {
+    await using reader = await openReportSource(input.source);
+    report = await readReport({ reader, signal: input.signal });
+  }
 
-入口按领取、执行、收尾、最终提交展开。`RunControl` 集中维护租约轮询、取消信号和轮询失败，调用者只在执行结束后读取一次失败结果。词法作用域明确租约维护的结束位置：执行函数完成 SDK/沙箱收尾后，才停止续约并判断最终提交。
+  await recordReport(report);
+  return report;
+}
+```
 
-使用 class 的理由是关联状态与生命周期需要共同维护。无状态转换使用函数；小范围状态也可以由闭包维护。
+## 校验输入后使用解析结果
 
-Worker 关闭时先等待已接受的 SDK、沙箱和文件操作结束，再关闭队列连接。Redis 通知可能因断线而挂起，应由传输关闭期限处理，不加入资源释放的等待集合。
+输入 schema 提供规则与类型。入口读取运行时数据后立刻解析，内部操作使用解析出来的值。外部字段名可以在入口转换为代码使用的命名。
 
-执行编排限定实时事件的故障范围。Redis 发布失败时记录一次传输错误，后续用 PG 版本和已确认消息对账。模型、持久消息和副作用回执仍沿原有执行链路验收。
+```ts
+const preferencesSchema = z.object({
+  pageSize: z.number().int().min(1).max(100).default(20),
+});
 
-验证参考：[execution.test.ts](../tests/integration/execution.test.ts) 的真实 Worker 执行与显式取消用例，以及 [agents.test.ts](../tests/integration/agents.test.ts) 的 owner 过期隔离和取消竞态用例。
+type Preferences = z.infer<typeof preferencesSchema>;
 
-## 事务钩子：使用调用者正在持有的事务
+export function readPreferences(text: string): Preferences {
+  const raw: unknown = JSON.parse(text);
 
-阅读 [authentication.ts](../apps/server/src/infrastructure/authentication/authentication.ts) 的 `runTransaction` 和 [api.ts](../apps/server/src/bootstrap/api.ts) 的 Workspace 插件组装。删除检查跟随 Better Auth 已持有行锁的事务，应用查询从同一个 PostgreSQL 连接读取。接入钩子时检查事务所有者和连接占用，尤其是需要在资源检查后再提交删除时。
-
-## SDK 事件：按协议层级解释，保持转换职责单一
-
-阅读 [pi/events.ts](../packages/agent-runtime/src/pi/events.ts) 的 `createSessionObserver`、`mapSessionEvent`、`mapMessage` 和 `mapTextDelta`；调用处是 [pi/execute.ts](../packages/agent-runtime/src/pi/execute.ts) 中的 SDK 订阅。
-
-每次执行的消息序号由一个闭包维护。顶层分派只解释 Session 事件；消息和文本增量各自处理相关载荷。显式列出忽略的 SDK 事件并保留穷尽检查，让 SDK 类型变化触发重新审查。
-
-转换模块不负责持久化、异步交付确认或 SDK 停止；这些职责由调用处的执行资源对象维护。接入其他 SDK 时需重新确认其通知和取消语义。
-
-验证参考：[pi.test.ts](../tests/sdk/pi.test.ts) 的原生流映射、取消时未完成消息、失败确认和最终事件确认用例。
-
-## 配置解析：输入边界与优先级集中维护
-
-阅读 [CLI config.ts](../apps/cli/src/config.ts) 的 `loadCliConfig`、`readPreferences` 和 `getConfigDirectory`；调用处是 [CLI bootstrap.ts](../apps/cli/src/bootstrap.ts)。
-
-环境与 JSON 在入口解析，类型从 schema 推导；环境、平台和主目录由调用处传入。配置优先级在一个位置表达，目录规则和文件读取各自集中。默认配置文件不存在是预期情况，显式指定文件缺失或内容无效会保留原因并报错。
-
-这个范例处理非敏感 CLI 偏好。服务端凭据仍由相应启动配置解析，不能沿用用户偏好的缺省规则。
-
-验证参考：[config.test.ts](../apps/cli/src/config.test.ts) 的配置优先级、显式文件缺失及本地探测配置独立性用例。
-
-## 交付前再读一遍
-
-从实际调用处进入，核对新增抽象是否减少了调用者必须理解的知识，逻辑段落是否清楚，注释是否准确解释约束。正确性与可读性分别验收，并完成与改动相关的验证及废弃路径清理。
+  return preferencesSchema.parse(raw);
+}
+```

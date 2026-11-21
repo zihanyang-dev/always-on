@@ -1,0 +1,5 @@
+{
+  "name": "@always-on/cloud-runner",
+  "private": true,
+  "type": "module"
+}

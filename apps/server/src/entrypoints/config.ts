@@ -1,0 +1,114 @@
+import { z } from 'zod';
+import type { AuthenticationConfig, OAuthCredentials } from '../access/index.ts';
+import type { EmailConfig, ObservabilityConfig } from '../infrastructure/index.ts';
+
+const OPTIONAL_SECRET = z.string().trim().min(1).optional();
+
+const API_ENV = z.object({
+  NODE_ENV: z.string().optional(),
+  DATABASE_URL: z.url({ protocol: /^postgres(?:ql)?$/ }),
+  HOST: z.string().trim().min(1).default('127.0.0.1'),
+  PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+  BETTER_AUTH_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:3001'),
+  BETTER_AUTH_SECRET: z.string().min(32),
+  LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
+  OTEL_SERVICE_NAME: z.string().trim().min(1).default('always-on-api'),
+  OTEL_EXPORTER_OTLP_ENDPOINT: z
+    .url({ protocol: /^https?$/ })
+    .refine(isOtlpEndpoint)
+    .optional(),
+  GITHUB_CLIENT_ID: OPTIONAL_SECRET,
+  GITHUB_CLIENT_SECRET: OPTIONAL_SECRET,
+  GOOGLE_CLIENT_ID: OPTIONAL_SECRET,
+  GOOGLE_CLIENT_SECRET: OPTIONAL_SECRET,
+  RESEND_API_KEY: OPTIONAL_SECRET,
+  EMAIL_FROM: z
+    .string()
+    .trim()
+    .min(1)
+    .regex(/^[^\r\n]+$/)
+    .optional(),
+});
+
+type ApiConfig = {
+  databaseUrl: string;
+  host: string;
+  port: number;
+  auth: AuthenticationConfig;
+  email: EmailConfig | undefined;
+  observability: ObservabilityConfig;
+};
+
+/** Parses deployment input once, without putting secret values in configuration errors. */
+export function readApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
+  const parsed = API_ENV.safeParse(env);
+  if (!parsed.success) {
+    const fields = parsed.error.issues.map(({ path }) => path.join('.'));
+    throw new Error(`Invalid API configuration: ${fields.join(', ')}`);
+  }
+
+  const values = parsed.data;
+  const authUrl = new URL(values.BETTER_AUTH_URL);
+  if (
+    authUrl.pathname !== '/' ||
+    authUrl.search ||
+    authUrl.hash ||
+    authUrl.username ||
+    authUrl.password
+  )
+    throw new Error('BETTER_AUTH_URL must be an origin');
+  if (values.NODE_ENV === 'production' && authUrl.protocol !== 'https:')
+    throw new Error('BETTER_AUTH_URL must use HTTPS in production');
+  if (values.RESEND_API_KEY && !values.EMAIL_FROM)
+    throw new Error('EMAIL_FROM is required when RESEND_API_KEY is set');
+
+  return {
+    databaseUrl: values.DATABASE_URL,
+    host: values.HOST,
+    port: values.PORT,
+    observability: {
+      logLevel: values.LOG_LEVEL,
+      serviceName: values.OTEL_SERVICE_NAME,
+      otlpEndpoint: values.OTEL_EXPORTER_OTLP_ENDPOINT,
+    },
+    auth: {
+      origin: authUrl.origin,
+      secret: values.BETTER_AUTH_SECRET,
+      github: readCredentials({
+        provider: 'GITHUB',
+        clientId: values.GITHUB_CLIENT_ID,
+        clientSecret: values.GITHUB_CLIENT_SECRET,
+      }),
+      google: readCredentials({
+        provider: 'GOOGLE',
+        clientId: values.GOOGLE_CLIENT_ID,
+        clientSecret: values.GOOGLE_CLIENT_SECRET,
+      }),
+    },
+    email:
+      values.RESEND_API_KEY && values.EMAIL_FROM
+        ? { apiKey: values.RESEND_API_KEY, from: values.EMAIL_FROM }
+        : undefined,
+  };
+}
+
+function isOtlpEndpoint(value: string) {
+  const parsed = URL.parse(value);
+  return parsed !== null && !parsed.username && !parsed.password && !parsed.search && !parsed.hash;
+}
+
+function readCredentials({
+  provider,
+  clientId,
+  clientSecret,
+}: {
+  provider: 'GITHUB' | 'GOOGLE';
+  clientId: string | undefined;
+  clientSecret: string | undefined;
+}): OAuthCredentials | undefined {
+  if (!clientId && !clientSecret) return undefined;
+  if (!clientId || !clientSecret)
+    throw new Error(`Configure both ${provider}_CLIENT_ID and ${provider}_CLIENT_SECRET`);
+
+  return { clientId, clientSecret };
+}
