@@ -4,7 +4,7 @@ import { openDatabase } from '../infrastructure/database/index.js';
 import { openAgentWorker } from '../tasks/index.js';
 import { deleteCloudSessionResources, executeCloudRun } from './cloud-agent.js';
 import { parseWorkerEnv } from './env.js';
-import { reportError } from './report-error.js';
+import { describeError, reportError } from './report-error.js';
 import { observeShutdown } from './shutdown.js';
 
 try {
@@ -21,7 +21,8 @@ async function main() {
   if (!config) return;
 
   const logger = pino({ level: env.LOG_LEVEL, base: { process: 'worker' } });
-  const onError = (error: Error) => logger.error({ err: error }, 'Worker dependency failed');
+  const onError = (error: Error) =>
+    logger.error({ failure: describeError(error) }, 'Worker dependency failed');
 
   using shutdown = observeShutdown();
   await using database = openDatabase({ url: env.DATABASE_URL, onError });

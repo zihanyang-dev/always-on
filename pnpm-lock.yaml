@@ -232,6 +232,9 @@ importers:
       e2b:
         specifier: 'catalog:'
         version: 2.64.0
+      rolldown:
+        specifier: 1.2.19
+        version: 1.2.19
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

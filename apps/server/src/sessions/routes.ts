@@ -1,6 +1,8 @@
 import {
   AGENT_CONFIGURATION_SCHEMA,
   CREATE_SESSION_SCHEMA,
+  OFFBOARD_MEMBER_SCHEMA,
+  RECONCILE_RUN_SCHEMA,
   SESSION_HISTORY_QUERY_SCHEMA,
   SESSION_LIST_QUERY_SCHEMA,
   SUBMIT_MESSAGE_SCHEMA,
@@ -20,12 +22,14 @@ import {
 import type { Database } from '../infrastructure/database/index.js';
 import { readSessionDeletion, requestSessionDeletion } from './deletion.js';
 import { SESSION_CURSOR_SCHEMA } from './events.js';
+import { cleanFormerMemberResources } from './offboarding.js';
 import {
   listAgentSessions,
   readSessionHistory,
   readSessionRevision,
   readSessionSnapshot,
 } from './queries.js';
+import { reconcileSessionRun } from './recovery.js';
 import {
   cancelSessionRun,
   createAgentSession,
@@ -60,6 +64,11 @@ type SubmitContext = AuthenticatedContext<{
   json: z.infer<typeof SUBMIT_MESSAGE_SCHEMA>;
 }>;
 type CancelContext = AuthenticatedContext<{ param: z.infer<typeof RUN_PATH_SCHEMA> }>;
+type ReconcileContext = AuthenticatedContext<{
+  param: z.infer<typeof RUN_PATH_SCHEMA>;
+  json: z.infer<typeof RECONCILE_RUN_SCHEMA>;
+}>;
+type OffboardingContext = AuthenticatedContext<{ json: z.infer<typeof OFFBOARD_MEMBER_SCHEMA> }>;
 
 type SessionRoutesOptions = {
   db: Database;
@@ -78,6 +87,11 @@ export function createSessionRoutes({
   const routes = createAuthenticatedRouter(getUser);
   routes.get('/', zValidator('query', SESSION_LIST_QUERY_SCHEMA, handleValidationResult), list);
   routes.post('/', zValidator('json', CREATE_SESSION_SCHEMA, handleValidationResult), create);
+  routes.post(
+    '/offboarding',
+    zValidator('json', OFFBOARD_MEMBER_SCHEMA, handleValidationResult),
+    offboard,
+  );
   routes.get('/:sessionId', VALIDATE_SESSION, read);
   routes.patch(
     '/:sessionId',
@@ -109,6 +123,12 @@ export function createSessionRoutes({
     '/:sessionId/runs/:runId/cancel',
     zValidator('param', RUN_PATH_SCHEMA, handleValidationResult),
     cancel,
+  );
+  routes.post(
+    '/:sessionId/runs/:runId/reconcile',
+    zValidator('param', RUN_PATH_SCHEMA, handleValidationResult),
+    zValidator('json', RECONCILE_RUN_SCHEMA, handleValidationResult),
+    reconcile,
   );
   if (events) routes.get('/:sessionId/events', VALIDATE_SESSION, (ctx) => subscribe(ctx, events));
 
@@ -265,6 +285,29 @@ export function createSessionRoutes({
     if (!run) return ctx.json({ code: 'not_found' }, 404);
 
     return ctx.json(run);
+  }
+
+  async function reconcile(ctx: ReconcileContext) {
+    const result = await reconcileSessionRun({
+      db,
+      ...ctx.req.valid('param'),
+      ...ctx.req.valid('json'),
+      userId: ctx.get('userId'),
+    });
+    if (result.status === 'reconciled') return ctx.json(result.run);
+
+    return ctx.json({ code: result.status }, result.status === 'not_found' ? 404 : 409);
+  }
+
+  async function offboard(ctx: OffboardingContext) {
+    const result = await cleanFormerMemberResources({
+      db,
+      actorId: ctx.get('userId'),
+      ...ctx.req.valid('json'),
+    });
+    if (result.status === 'accepted') return ctx.json(result, 202);
+
+    return ctx.json({ code: result.status }, result.status === 'not_found' ? 404 : 409);
   }
 
   async function subscribe(ctx: SessionContext, connection: SessionStreamConnection) {

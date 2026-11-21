@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   type LoginMethod,
   USER_PROFILE_SCHEMA,
@@ -10,7 +11,7 @@ import {
   type BetterAuthRateLimitOptions,
   betterAuth,
 } from 'better-auth';
-import { DATABASE_SCHEMA, type Database } from '../database/index.js';
+import { DATABASE_SCHEMA, type Database, type DatabaseTransaction } from '../database/index.js';
 import type { SendEmail } from '../email/index.js';
 
 const CLIENT_IP_HEADER = 'x-always-on-client-ip';
@@ -42,15 +43,22 @@ export function createAuthentication({
   sendEmail,
   rateLimit,
   onError,
-  plugins = [],
+  createPlugins = () => [],
 }: {
   db: Database;
   config: AuthenticationConfig;
   sendEmail: SendEmail | undefined;
   rateLimit: NonNullable<BetterAuthRateLimitOptions['customStorage']>;
   onError: (error: Error) => void;
-  plugins?: BetterAuthPlugin[];
+  createPlugins?: (requireTransaction: () => DatabaseTransaction) => BetterAuthPlugin[];
 }): Authentication {
+  const transactions = new AsyncLocalStorage<DatabaseTransaction>();
+  // Hooks share the connection selected by the SDK's Drizzle adapter.
+  const adapterDatabase = new Proxy(db, {
+    get(target, field, receiver) {
+      return field === 'transaction' ? runTransaction : Reflect.get(target, field, receiver);
+    },
+  });
   const pending = new Set<Promise<unknown>>();
   const methods: LoginMethod[] = [];
   if (config.google) methods.push('google');
@@ -67,13 +75,13 @@ export function createAuthentication({
     basePath: '/api/auth',
     secret: config.secret,
     trustedOrigins: [new URL(config.baseUrl).origin],
-    database: drizzleAdapter(db, {
+    database: drizzleAdapter(adapterDatabase, {
       provider: 'pg',
       schema: DATABASE_SCHEMA,
       transaction: true,
     }),
     socialProviders,
-    plugins,
+    plugins: createPlugins(requireTransaction),
     emailAndPassword: {
       enabled: sendEmail !== undefined,
       requireEmailVerification: true,
@@ -104,10 +112,25 @@ export function createAuthentication({
       backgroundTasks: { handler: schedule },
     },
     logger: { level: 'error', log: reportSdkError },
+    // Route infrastructure errors through the application's logging boundary.
+    onAPIError: { throw: true },
     telemetry: { enabled: false },
   } satisfies BetterAuthOptions);
 
   return { methods, handle, getUser, [Symbol.asyncDispose]: dispose };
+
+  function runTransaction<TResult>(
+    operation: (transaction: DatabaseTransaction) => Promise<TResult>,
+  ): Promise<TResult> {
+    return db.transaction((transaction) => transactions.run(transaction, operation, transaction));
+  }
+
+  function requireTransaction(): DatabaseTransaction {
+    const transaction = transactions.getStore();
+    if (!transaction) throw new Error('Authentication hook requires a database transaction');
+
+    return transaction;
+  }
 
   function handle({ request, clientIp }: { request: Request; clientIp: string | undefined }) {
     const headers = new Headers(request.headers);

@@ -1,6 +1,7 @@
 import type { Agent, AgentRun, AgentSession } from '@always-on/contracts/agents';
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   check,
   index,
   integer,
@@ -91,28 +92,43 @@ export const AGENT_RUNS = pgTable(
       .references(() => INBOX_EVENTS.id, { onDelete: 'restrict' }),
     configuration: jsonb('configuration').$type<unknown>().notNull(),
     inputText: text('input_text').notNull(),
+    admissionOrder: bigint('admission_order', { mode: 'bigint' })
+      .generatedAlwaysAsIdentity()
+      .notNull(),
     status: text('status').$type<AgentRun['status']>().notNull().default('queued'),
     ownerToken: uuid('owner_token'),
     leaseUntil: timestamp('lease_until', { withTimezone: true }),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     error: text('error'),
+    reconciliation: jsonb('reconciliation').$type<{
+      readonly userId: string;
+      readonly reason: string;
+      readonly at: string;
+    }>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    index('agent_runs_pending_idx').on(table.status, table.createdAt),
-    index('agent_runs_session_idx').on(table.sessionId, table.createdAt),
+    index('agent_runs_pending_idx').on(table.status, table.admissionOrder),
+    index('agent_runs_session_admission_idx').on(
+      table.sessionId,
+      table.status,
+      table.admissionOrder,
+    ),
     // Match the display order without sorting all earlier Runs for every listed Session.
     index('agent_runs_session_display_idx').on(
       table.sessionId,
       sql`(${table.status} in ('running', 'cancelling', 'recovery_required'))`,
-      table.createdAt,
-      table.id,
+      table.admissionOrder,
     ),
     // The database enforces one writer even when queue delivery and lease renewal race.
     uniqueIndex('agent_runs_session_writer')
       .on(table.sessionId)
       .where(sql`${table.status} in ('running', 'cancelling')`),
+    check(
+      'agent_runs_reconciliation_check',
+      sql`${table.reconciliation} is null or ${table.status} = 'failed'`,
+    ),
     check(
       'agent_runs_state_check',
       sql`(${table.status} = 'queued' and ${table.ownerToken} is null and ${table.finishedAt} is null)

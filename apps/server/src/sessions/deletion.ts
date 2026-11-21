@@ -1,5 +1,9 @@
-import { SESSION_DELETION_SCHEMA, type SessionDeletion } from '@always-on/contracts/agents';
-import { and, desc, eq, inArray, lte, sql } from 'drizzle-orm';
+import {
+  type AgentRun,
+  SESSION_DELETION_SCHEMA,
+  type SessionDeletion,
+} from '@always-on/contracts/agents';
+import { and, desc, eq, inArray, lte, ne, notExists, type SQL, sql } from 'drizzle-orm';
 import {
   AGENT_RUNS,
   AGENT_SESSIONS,
@@ -11,6 +15,24 @@ import { readOwnedSession, type SessionAccess } from './access.js';
 
 const CLEANUP_ATTEMPT_TIMEOUT_SECONDS = 60;
 const MAX_CLEANUP_RETRY_SECONDS = 300;
+const DELETION_BLOCKING_RUNS = [
+  'queued',
+  'running',
+  'cancelling',
+  'recovery_required',
+] as const satisfies readonly AgentRun['status'][];
+const DELETION_PROGRESS_FIELDS = {
+  id: AGENT_SESSIONS.id,
+  status: AGENT_SESSIONS.status,
+  deletionRequestedAt: AGENT_SESSIONS.deletionRequestedAt,
+  cleanupAfter: AGENT_SESSIONS.cleanupAfter,
+  cleanupAttempts: AGENT_SESSIONS.cleanupAttempts,
+  cleanupError: AGENT_SESSIONS.cleanupError,
+};
+type DeletionProgress = Pick<
+  typeof AGENT_SESSIONS.$inferSelect,
+  keyof typeof DELETION_PROGRESS_FIELDS
+>;
 
 /** Cloud resource identities retained by the immutable deletion request. */
 export type SessionResources = { readonly sessionId: string; readonly sandboxId: string | null };
@@ -44,7 +66,7 @@ export async function requestSessionDeletion({
       .where(
         and(
           eq(AGENT_RUNS.sessionId, sessionId),
-          inArray(AGENT_RUNS.status, ['queued', 'running', 'cancelling', 'recovery_required']),
+          inArray(AGENT_RUNS.status, DELETION_BLOCKING_RUNS),
         ),
       )
       .orderBy(desc(sql`${AGENT_RUNS.status} = 'recovery_required'`))
@@ -52,20 +74,51 @@ export async function requestSessionDeletion({
     if (blocker)
       return { status: blocker.status === 'recovery_required' ? 'recovery_required' : 'busy' };
 
-    const [requested] = await transaction
-      .update(AGENT_SESSIONS)
-      .set({
-        status: 'deleting',
-        deletionRequestedAt: sql`clock_timestamp()`,
-        cleanupAfter: sql`clock_timestamp()`,
-        revision: sql`${AGENT_SESSIONS.revision} + 1`,
-      })
-      .where(eq(AGENT_SESSIONS.id, sessionId))
-      .returning();
+    const [requested] = await startSessionDeletion(transaction, [sessionId]);
     if (!requested) throw new Error(`Session ${sessionId} disappeared during deletion request`);
 
     return { status: 'accepted', deletion: parseDeletion(requested) };
   }
+}
+
+/** Advances Sessions already locked and checked for outstanding execution. */
+export async function startSessionDeletion(
+  transaction: DatabaseTransaction,
+  sessionIds: readonly string[],
+): Promise<readonly DeletionProgress[]> {
+  if (sessionIds.length === 0) return [];
+
+  return transaction
+    .update(AGENT_SESSIONS)
+    .set({
+      status: 'deleting',
+      deletionRequestedAt: sql`clock_timestamp()`,
+      cleanupAfter: sql`clock_timestamp()`,
+      revision: sql`${AGENT_SESSIONS.revision} + 1`,
+    })
+    .where(
+      and(
+        inArray(AGENT_SESSIONS.id, sessionIds),
+        ne(AGENT_SESSIONS.status, 'deleting'),
+        hasNoBlockingRuns(transaction),
+      ),
+    )
+    .returning(DELETION_PROGRESS_FIELDS);
+}
+
+/** Selects only Sessions whose associated Runs all reached a known boundary. */
+export function hasNoBlockingRuns(transaction: DatabaseTransaction): SQL {
+  const blockers = transaction
+    .select({ id: AGENT_RUNS.id })
+    .from(AGENT_RUNS)
+    .where(
+      and(
+        eq(AGENT_RUNS.sessionId, AGENT_SESSIONS.id),
+        inArray(AGENT_RUNS.status, DELETION_BLOCKING_RUNS),
+      ),
+    );
+
+  return notExists(blockers);
 }
 
 /** Reads cleanup progress only while the original owner retains Workspace read permission. */
@@ -211,7 +264,7 @@ async function recordCleanupFailure({
   throw failure;
 }
 
-function parseDeletion(row: typeof AGENT_SESSIONS.$inferSelect) {
+function parseDeletion(row: DeletionProgress) {
   return SESSION_DELETION_SCHEMA.parse({
     sessionId: row.id,
     status: row.status,

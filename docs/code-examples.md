@@ -34,7 +34,13 @@
 
 Worker 关闭时先等待已接受的 SDK、沙箱和文件操作结束，再关闭队列连接。Redis 通知可能因断线而挂起，应由传输关闭期限处理，不加入资源释放的等待集合。
 
+执行编排限定实时事件的故障范围。Redis 发布失败时记录一次传输错误，后续用 PG 版本和已确认消息对账。模型、持久消息和副作用回执仍沿原有执行链路验收。
+
 验证参考：[execution.test.ts](../tests/integration/execution.test.ts) 的真实 Worker 执行与显式取消用例，以及 [agents.test.ts](../tests/integration/agents.test.ts) 的 owner 过期隔离和取消竞态用例。
+
+## 事务钩子：使用调用者正在持有的事务
+
+阅读 [authentication.ts](../apps/server/src/infrastructure/authentication/authentication.ts) 的 `runTransaction` 和 [api.ts](../apps/server/src/bootstrap/api.ts) 的 Workspace 插件组装。删除检查跟随 Better Auth 已持有行锁的事务，应用查询从同一个 PostgreSQL 连接读取。接入钩子时检查事务所有者和连接占用，尤其是需要在资源检查后再提交删除时。
 
 ## SDK 事件：按协议层级解释，保持转换职责单一
 

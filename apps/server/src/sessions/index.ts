@@ -6,6 +6,7 @@ export {
 } from './deletion.js';
 export { deleteSessionEvents, publishSessionEvent } from './events.js';
 export { readSessionSnapshot } from './queries.js';
+export { advanceSessionRevision, parseRun } from './records.js';
 export { createSessionRoutes } from './routes.js';
 export {
   cancelSessionRun,

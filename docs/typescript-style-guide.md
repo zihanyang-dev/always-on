@@ -633,9 +633,13 @@ tsconfig 必开：
 - module / moduleResolution：Node 项目用 nodenext；打包器项目用 preserve + bundler
 - target：ES2022 或更高
 
-agent 当前使用 `biome.json` 和 TypeScript 编译器执行检查，不额外叠加 ESLint。
+当前使用 `biome.json` 和 TypeScript 编译器执行检查。Biome 的 `noFloatingPromises` 拒绝未处理的 Promise 表达式。主动脱离请求生命周期的任务仍需在所属模块中报告失败并管理释放。
 以下用 typescript-eslint 的规则名说明检查目标，不能据此声称 Biome 已覆盖所有类型感知检查。
 导出返回类型、块嵌套深度、职责归属及代码形状仍需人工审查；`pnpm check` 通过不等于品味验收通过。
+
+CI 运行 [依赖边界检查](../scripts/check-boundaries.mjs)。浏览器只能依赖公开契约，生产代码跨 workspace 使用包导出。服务端跨功能进入公开 `index.js`，共享基础设施和 HTTP 中间件不反向依赖产品功能，具体 SDK 导入集中在各自归属。规则包含重导出、类型引用和字面量动态导入。新增合法依赖需要检查它为什么属于这个调用方，并随接口改动更新规则和回归。
+
+事务、撤权、取消、恢复、持久化和资源释放通过行为测试验收。对有状态改动，先读入口，再读关键状态的所有者，最后从调用者视角确认失败、重试和收尾。每次提取都应减少调用者必须记住的规则，或者把本来分散的状态决策集中起来。
 
 typescript-eslint（strictTypeChecked + stylisticTypeChecked 预设）中对应的规则：
 

@@ -5,9 +5,8 @@ import {
   AGENT_SESSIONS,
   type Database,
   type DatabaseTransaction,
-  WORKSPACE_MEMBERS,
 } from '../infrastructure/database/index.js';
-import { hasAgentPermission } from '../workspaces/index.js';
+import { hasAgentPermission, readWorkspaceRoles } from '../workspaces/index.js';
 import { parseSession } from './records.js';
 
 /** Identity required to read or mutate one private conversation. */
@@ -85,14 +84,7 @@ export async function hasWorkspaceSessionAccess({
   userId: string;
   action: 'read' | 'use';
 }): Promise<boolean> {
-  // Removal waits for this short transaction, never for a model request or an SSE subscription.
-  const [membership] = await transaction
-    .select({ roles: WORKSPACE_MEMBERS.role })
-    .from(WORKSPACE_MEMBERS)
-    .where(
-      and(eq(WORKSPACE_MEMBERS.organizationId, workspaceId), eq(WORKSPACE_MEMBERS.userId, userId)),
-    )
-    .for('share');
+  const roles = await readWorkspaceRoles({ transaction, workspaceId, userId });
 
-  return membership !== undefined && hasAgentPermission({ roles: membership.roles, action });
+  return roles !== undefined && hasAgentPermission({ roles, action });
 }

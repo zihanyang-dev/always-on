@@ -41,6 +41,9 @@
           }
         }
       },
+      "nursery": {
+        "noFloatingPromises": "error"
+      },
       "style": {
         "useBlockStatements": "off",
         "useImportType": "error",
@@ -120,19 +123,6 @@
         "rules": {
           "correctness": {
             "noNodejsModules": "error"
-          },
-          "style": {
-            "noRestrictedImports": {
-              "level": "error",
-              "options": {
-                "patterns": [
-                  {
-                    "group": ["@always-on/agent-runtime", "@always-on/agent-runtime/**"],
-                    "message": "Browser code uses public contracts; keep Node capabilities and execution SDKs in server or CLI code."
-                  }
-                ]
-              }
-            }
           }
         }
       }

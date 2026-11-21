@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 import type { ModelConnection } from '@always-on/agent-runtime/pi';
 import { z } from 'zod';
+import { ConfigurationError } from './report-error.js';
 
 const ENVIRONMENT_SOURCE_SCHEMA = z
   .looseObject({})
@@ -42,7 +43,10 @@ export function parseCloudAgentConfiguration(input: unknown): CloudAgentConfigur
   const providers = readProviders(environment.MODEL_PROVIDERS);
   const connections = providers.map((provider) => {
     const apiKey = environment[provider.credentialEnvironmentKey];
-    if (!apiKey) throw new Error(`Configure model credential ${provider.credentialEnvironmentKey}`);
+    if (!apiKey)
+      throw new ConfigurationError(
+        `Configure model credential ${provider.credentialEnvironmentKey}`,
+      );
 
     return {
       provider: provider.provider,
@@ -53,7 +57,9 @@ export function parseCloudAgentConfiguration(input: unknown): CloudAgentConfigur
   const hasApiUrl = Boolean(environment.E2B_API_URL);
   const hasSandboxUrl = Boolean(environment.E2B_SANDBOX_URL);
   if (hasApiUrl !== hasSandboxUrl)
-    throw new Error('Configure E2B_API_URL and E2B_SANDBOX_URL together for self-hosted E2B');
+    throw new ConfigurationError(
+      'Configure E2B_API_URL and E2B_SANDBOX_URL together for self-hosted E2B',
+    );
 
   const result = CLOUD_AGENT_SCHEMA.safeParse({
     directory: environment.AGENT_SESSION_DIRECTORY,
@@ -71,7 +77,7 @@ export function parseCloudAgentConfiguration(input: unknown): CloudAgentConfigur
 
   // Values may be credentials; report only configuration field names.
   const fields = result.error.issues.map((issue) => issue.path.join('.'));
-  throw new Error(`Invalid cloud Agent configuration: ${fields.join(', ')}`);
+  throw new ConfigurationError(`Invalid cloud Agent configuration: ${fields.join(', ')}`);
 }
 
 function readProviders(serialized: string | undefined) {
@@ -82,13 +88,15 @@ function readProviders(serialized: string | undefined) {
     input = JSON.parse(serialized);
   } catch {
     // JSON syntax errors quote raw input, which may accidentally contain credentials.
-    throw new Error('MODEL_PROVIDERS must contain a JSON array');
+    throw new ConfigurationError('MODEL_PROVIDERS must contain a JSON array');
   }
   const result = z.array(PROVIDER_SCHEMA).min(1).max(20).safeParse(input);
-  if (!result.success) throw new Error('MODEL_PROVIDERS contains an invalid provider definition');
+  if (!result.success)
+    throw new ConfigurationError('MODEL_PROVIDERS contains an invalid provider definition');
 
   const identities = new Set(result.data.map((provider) => provider.provider));
-  if (identities.size !== result.data.length) throw new Error('MODEL_PROVIDERS repeats a provider');
+  if (identities.size !== result.data.length)
+    throw new ConfigurationError('MODEL_PROVIDERS repeats a provider');
 
   return result.data;
 }

@@ -5,7 +5,12 @@ import {
   type AgentRun,
   type AgentSession,
 } from '@always-on/contracts/agents';
-import type { AGENT_RUNS, AGENT_SESSIONS } from '../infrastructure/database/index.js';
+import { eq, sql } from 'drizzle-orm';
+import {
+  type AGENT_RUNS,
+  AGENT_SESSIONS,
+  type DatabaseTransaction,
+} from '../infrastructure/database/index.js';
 
 type RunViewRow = Pick<
   typeof AGENT_RUNS.$inferSelect,
@@ -31,4 +36,15 @@ export function parseRun(row: RunViewRow): AgentRun {
     startedAt: row.startedAt?.toISOString(),
     finishedAt: row.finishedAt?.toISOString(),
   });
+}
+
+/** Advances the display version after a durable change under the Session lock. */
+export async function advanceSessionRevision(
+  transaction: DatabaseTransaction,
+  sessionId: string,
+): Promise<void> {
+  await transaction
+    .update(AGENT_SESSIONS)
+    .set({ revision: sql`${AGENT_SESSIONS.revision} + 1` })
+    .where(eq(AGENT_SESSIONS.id, sessionId));
 }

@@ -11,6 +11,7 @@ import { expect, it, vi } from 'vitest';
 import {
   AGENT_RUNS,
   AGENT_SESSIONS,
+  AGENT_TOOL_CALLS,
   AGENTS,
   INBOX_EVENTS,
 } from '../../apps/server/src/infrastructure/database/index.js';
@@ -24,11 +25,135 @@ import {
   completeRun,
   recoverExpiredRuns,
   renewRun,
+  startRunTool,
 } from '../../apps/server/src/tasks/index.js';
 import { openExecutionFixture, TEST_MODEL_CATALOG } from './execution-fixture.js';
 import { openWorkspaceFixture } from './workspace-fixture.js';
 
 type ExecutionFixture = Awaited<ReturnType<typeof openExecutionFixture>>;
+
+it('records manual reconciliation, preserves tool evidence and cancels the unattended backlog', async () => {
+  await using fixture = await openExecutionFixture();
+  const active = await fixture.submit();
+  const backlog = await fixture.submit({ text: 'Queued before recovery' });
+  const claim = await claimRun({ db: fixture.db, runId: active.run.id, ownerToken: randomUUID() });
+  assert.ok(claim);
+  const toolId = randomUUID();
+  await startRunTool({
+    db: fixture.db,
+    claim,
+    tool: { id: toolId, name: 'external_effect' },
+  });
+  const path = `/api/sessions/${fixture.sessionId}/runs/${active.run.id}/reconcile`;
+  const body = { reason: 'Verified the executor stopped and inspected the effect' };
+  expect((await fixture.request({ path, body })).status).toBe(409);
+  await fixture.db
+    .update(AGENT_RUNS)
+    .set({ leaseUntil: sql`clock_timestamp() - interval '1 second'` })
+    .where(eq(AGENT_RUNS.id, active.run.id));
+  await recoverExpiredRuns(fixture.db);
+
+  expect((await fixture.request({ path, body, headers: { cookie: '' } })).status).toBe(401);
+  const reconciled = await fixture.request({ path, body });
+  expect(reconciled.status).toBe(200);
+  expect(await reconciled.json()).toMatchObject({ id: active.run.id, status: 'failed' });
+  const fresh = await fixture.submit({ text: 'Fresh work after reconciling' });
+  const repeated = await fixture.request({ path, body: { reason: 'Duplicate request' } });
+  expect(repeated.status).toBe(200);
+
+  const [run, queued, waiting, receipt] = await Promise.all([
+    fixture.db.select().from(AGENT_RUNS).where(eq(AGENT_RUNS.id, active.run.id)),
+    fixture.db.select().from(AGENT_RUNS).where(eq(AGENT_RUNS.id, fresh.run.id)),
+    fixture.db.select().from(AGENT_RUNS).where(eq(AGENT_RUNS.id, backlog.run.id)),
+    fixture.db.select().from(AGENT_TOOL_CALLS).where(eq(AGENT_TOOL_CALLS.id, toolId)),
+  ]);
+  expect(run[0]?.reconciliation).toMatchObject({ userId: fixture.userId, reason: body.reason });
+  expect(queued[0]?.status).toBe('queued');
+  expect(waiting[0]?.status).toBe('cancelled');
+  expect(receipt[0]?.status).toBe('pending');
+});
+
+it('lets management schedule cleanup for a former member without opening private history', async () => {
+  await using fixture = await openWorkspaceFixture({ catalog: TEST_MODEL_CATALOG });
+  const [owner, member, peer] = await Promise.all(
+    ['owner', 'member', 'peer'].map((label) => fixture.createActor(label)),
+  );
+  assert.ok(owner && member && peer);
+  const workspace = await fixture.createWorkspace({ actor: owner, label: 'offboarding' });
+  const [{ id: membershipId }] = await Promise.all([
+    fixture.join({ actor: owner, organizationId: workspace.id, recipient: member, role: 'member' }),
+    fixture.join({ actor: owner, organizationId: workspace.id, recipient: peer, role: 'member' }),
+  ]);
+  const configuration = {
+    workspaceId: workspace.id,
+    name: 'Offboarding Agent',
+    instructions: 'Private instructions',
+    model: TEST_MODEL_CATALOG.defaultModel,
+    reasoningEffort: 'off',
+  };
+  const agentId = AGENT_SCHEMA.parse(
+    await (
+      await fixture.request({ actor: member, path: '/api/agents', body: configuration })
+    ).json(),
+  ).id;
+  const session = AGENT_SESSION_SCHEMA.parse(
+    await (
+      await fixture.request({ actor: member, path: '/api/sessions', body: { agentId } })
+    ).json(),
+  );
+  const body = { workspaceId: workspace.id, userId: member.id };
+  const path = '/api/sessions/offboarding';
+  expect((await fixture.request({ actor: owner, path, body })).status).toBe(409);
+  expect(
+    (
+      await fixture.request({
+        actor: owner,
+        path: '/api/auth/organization/remove-member',
+        body: { organizationId: workspace.id, memberIdOrEmail: membershipId },
+      })
+    ).status,
+  ).toBe(200);
+  expect((await fixture.request({ actor: peer, path, body })).status).toBe(404);
+  expect(
+    (
+      await fixture.request({
+        actor: owner,
+        method: 'GET',
+        path: `/api/sessions/${session.id}`,
+      })
+    ).status,
+  ).toBe(404);
+
+  const accepted = await fixture.request({ actor: owner, path, body });
+  expect(accepted.status).toBe(202);
+  expect(await accepted.json()).toEqual({
+    status: 'accepted',
+    scheduledSessions: 1,
+    remainingSessions: 0,
+    deletedPrivateAgents: 0,
+  });
+  await processSessionDeletion({
+    db: fixture.db,
+    sessionId: session.id,
+    deleteResources: async () => {},
+  });
+  const repeated = await fixture.request({ actor: owner, path, body });
+  expect(await repeated.json()).toEqual({
+    status: 'accepted',
+    scheduledSessions: 0,
+    remainingSessions: 0,
+    deletedPrivateAgents: 1,
+  });
+  expect(
+    (
+      await fixture.request({
+        actor: owner,
+        path: '/api/auth/organization/delete',
+        body: { organizationId: workspace.id },
+      })
+    ).status,
+  ).toBe(200);
+});
 
 it('edits Agent defaults without resetting visibility or changing existing Session and Run snapshots', async () => {
   await using fixture = await openExecutionFixture();

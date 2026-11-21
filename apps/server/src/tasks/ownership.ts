@@ -5,9 +5,7 @@ import {
 import {
   type ActiveAgentRun,
   AGENT_CONFIGURATION_SCHEMA,
-  AGENT_RUN_SCHEMA,
   type AgentConfiguration,
-  type AgentRun,
 } from '@always-on/contracts/agents';
 import { and, asc, eq, gt, inArray, lt, notExists, type SQL, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
@@ -19,6 +17,7 @@ import {
   type Database,
   type DatabaseTransaction,
 } from '../infrastructure/database/index.js';
+import { advanceSessionRevision, parseRun } from '../sessions/index.js';
 
 const RUN_LEASE_DURATION_MS = 20_000;
 
@@ -77,7 +76,7 @@ export async function claimRun({
       .select()
       .from(AGENT_RUNS)
       .where(and(eq(AGENT_RUNS.sessionId, session.id), eq(AGENT_RUNS.status, 'queued')))
-      .orderBy(asc(AGENT_RUNS.createdAt), asc(AGENT_RUNS.id))
+      .orderBy(asc(AGENT_RUNS.admissionOrder))
       .limit(1);
     if (!next || next.id !== runId) return null;
 
@@ -92,7 +91,7 @@ export async function claimRun({
         .update(AGENT_RUNS)
         .set({ status: 'cancelled', finishedAt: sql`clock_timestamp()` })
         .where(eq(AGENT_RUNS.id, runId));
-      await advanceRevision(transaction, session.id);
+      await advanceSessionRevision(transaction, session.id);
 
       return null;
     }
@@ -112,7 +111,7 @@ export async function claimRun({
     const run = parseRun(claimed);
     if (run.status !== 'running') throw new Error(`Run ${runId} was not activated during claim`);
 
-    await advanceRevision(transaction, session.id);
+    await advanceSessionRevision(transaction, session.id);
 
     return {
       run,
@@ -178,11 +177,19 @@ export async function listQueuedRuns(db: Database): Promise<readonly string[]> {
     );
   const dispatchFilter = and(eq(AGENT_RUNS.status, 'queued'), notExists(blockingRuns));
 
-  const rows = await db
-    .selectDistinctOn([AGENT_RUNS.sessionId], { id: AGENT_RUNS.id })
+  const firstQueuedPerSession = db
+    .selectDistinctOn([AGENT_RUNS.sessionId], {
+      id: AGENT_RUNS.id,
+      admissionOrder: AGENT_RUNS.admissionOrder,
+    })
     .from(AGENT_RUNS)
     .where(dispatchFilter)
-    .orderBy(AGENT_RUNS.sessionId, AGENT_RUNS.createdAt, AGENT_RUNS.id)
+    .orderBy(AGENT_RUNS.sessionId, AGENT_RUNS.admissionOrder)
+    .as('first_queued_per_session');
+  const rows = await db
+    .select({ id: firstQueuedPerSession.id })
+    .from(firstQueuedPerSession)
+    .orderBy(firstQueuedPerSession.admissionOrder)
     .limit(100);
 
   return rows.map((row) => row.id);
@@ -233,7 +240,7 @@ async function recoverExpiredRun(
       .update(AGENT_MESSAGES)
       .set({ state: 'interrupted' })
       .where(and(eq(AGENT_MESSAGES.runId, id), eq(AGENT_MESSAGES.state, 'pending')));
-    await advanceRevision(transaction, sessionId);
+    await advanceSessionRevision(transaction, sessionId);
   }
 }
 
@@ -300,25 +307,4 @@ export function getOwnedRunFilter(claim: RunClaim): SQL | undefined {
 
 function getLeaseDeadline() {
   return sql`clock_timestamp() + ${RUN_LEASE_DURATION_MS} * interval '1 millisecond'`;
-}
-
-/** Converts storage timestamps at the durable Run boundary. */
-export function parseRun(row: typeof AGENT_RUNS.$inferSelect): AgentRun {
-  return AGENT_RUN_SCHEMA.parse({
-    ...row,
-    createdAt: row.createdAt.toISOString(),
-    startedAt: row.startedAt?.toISOString(),
-    finishedAt: row.finishedAt?.toISOString(),
-  });
-}
-
-/** Advances the display revision under the caller's existing Session lock. */
-export async function advanceRevision(
-  transaction: DatabaseTransaction,
-  sessionId: string,
-): Promise<void> {
-  await transaction
-    .update(AGENT_SESSIONS)
-    .set({ revision: sql`${AGENT_SESSIONS.revision} + 1` })
-    .where(eq(AGENT_SESSIONS.id, sessionId));
 }

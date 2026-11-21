@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { EMAIL_FROM_SCHEMA } from '../infrastructure/email/index.js';
 import { type CloudAgentConfiguration, parseCloudAgentConfiguration } from './agent-config.js';
+import { ConfigurationError } from './report-error.js';
 
 const DATABASE_ENV_SCHEMA = z.object({ DATABASE_URL: z.url({ protocol: /^postgres(?:ql)?$/ }) });
 const COMMON_ENV_SCHEMA = DATABASE_ENV_SCHEMA.extend({
@@ -98,5 +99,5 @@ function throwConfigurationError({
 }): never {
   // Schema messages explain the rule; raw environment values never enter the diagnostic.
   const failures = issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
-  throw new Error(`Invalid ${role} configuration: ${failures.join('; ')}`);
+  throw new ConfigurationError(`Invalid ${role} configuration: ${failures.join('; ')}`);
 }

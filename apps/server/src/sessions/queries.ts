@@ -249,8 +249,7 @@ function selectCurrentRun(
     .where(eq(AGENT_RUNS.sessionId, sessionId))
     .orderBy(
       desc(sql`${AGENT_RUNS.status} in ('running', 'cancelling', 'recovery_required')`),
-      desc(AGENT_RUNS.createdAt),
-      desc(AGENT_RUNS.id),
+      desc(AGENT_RUNS.admissionOrder),
     )
     .limit(1);
 }

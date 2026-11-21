@@ -36,6 +36,7 @@ export async function executeQueuedRun({
   const control = new RunControl({ db, claim, signal });
   const emit = createRunOutput({ db, claim, publish: publishEvent });
   let completion: RunCompletion;
+  let hasLostProgress = false;
 
   // The executor releases SDK and sandbox resources before this scope stops lease renewal.
   {
@@ -63,8 +64,16 @@ export async function executeQueuedRun({
   const run = await completeRun({ db, claim, completion });
   await publishEvent({ type: 'run', run });
 
-  function publishEvent(event: SessionEvent) {
-    return publish({ sessionId, event });
+  async function publishEvent(event: SessionEvent) {
+    if (hasLostProgress) return;
+
+    try {
+      await publish({ sessionId, event });
+    } catch (error) {
+      // The rest of this Run is observable through its durable revision and messages.
+      hasLostProgress = true;
+      onError(new Error(`Run ${runId} realtime progress is unavailable`, { cause: error }));
+    }
   }
 }
 

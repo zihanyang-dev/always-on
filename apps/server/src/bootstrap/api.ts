@@ -14,7 +14,7 @@ import { createApp } from './app.js';
 import { loadAgentModelCatalog } from './cloud-agent.js';
 import { parseApiEnv } from './env.js';
 import { openHttpServer } from './http.js';
-import { reportError } from './report-error.js';
+import { describeError, reportError } from './report-error.js';
 import { observeShutdown } from './shutdown.js';
 
 try {
@@ -27,7 +27,8 @@ try {
 async function main() {
   const env = parseApiEnv(process.env);
   const logger = pino({ level: env.LOG_LEVEL, base: { process: 'api' } });
-  const onError = (error: Error) => logger.error({ err: error }, 'API dependency failed');
+  const onError = (error: Error) =>
+    logger.error({ failure: describeError(error) }, 'API dependency failed');
 
   using shutdown = observeShutdown();
   await using database = openDatabase({ url: env.DATABASE_URL, onError });
@@ -50,19 +51,20 @@ async function main() {
       clientSecret: env.GITHUB_CLIENT_SECRET,
     }),
   } satisfies AuthenticationConfig;
-  const workspacePlugin = createWorkspacePlugin({
-    baseUrl: env.BETTER_AUTH_URL,
-    sendEmail,
-    canDeleteWorkspace: async (workspaceId) =>
-      !(await hasWorkspaceAgents({ db: database.db, workspaceId })),
-  });
   await using authentication = createAuthentication({
     db: database.db,
     config: authenticationConfig,
     sendEmail,
     rateLimit: createAuthRateLimit({ redis: redis.client, prefix: env.REDIS_PREFIX }),
     onError,
-    plugins: [workspacePlugin],
+    createPlugins: (requireTransaction) => [
+      createWorkspacePlugin({
+        baseUrl: env.BETTER_AUTH_URL,
+        sendEmail,
+        canDeleteWorkspace: async (workspaceId) =>
+          !(await hasWorkspaceAgents({ transaction: requireTransaction(), workspaceId })),
+      }),
+    ],
   });
 
   const execution = env.cloudAgent

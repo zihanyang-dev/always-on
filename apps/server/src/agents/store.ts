@@ -7,16 +7,14 @@ import {
   type UpdateAgent,
 } from '@always-on/contracts/agents';
 import type { ModelOption } from '@always-on/contracts/models';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, notExists, or } from 'drizzle-orm';
 import {
   AGENT_SESSIONS,
   AGENTS,
   type Database,
   type DatabaseTransaction,
-  WORKSPACE_MEMBERS,
-  WORKSPACE_TABLES,
 } from '../infrastructure/database/index.js';
-import { hasAgentPermission } from '../workspaces/index.js';
+import { hasAgentPermission, lockWorkspace, readWorkspaceRoles } from '../workspaces/index.js';
 
 type AgentRow = typeof AGENTS.$inferSelect;
 
@@ -27,13 +25,13 @@ export type AgentUpdateResult =
 
 /** Preserves Workspace ownership while any Agent definition still exists. */
 export async function hasWorkspaceAgents({
-  db,
+  transaction,
   workspaceId,
 }: {
-  db: Database;
+  transaction: DatabaseTransaction;
   workspaceId: string;
 }): Promise<boolean> {
-  const [agent] = await db
+  const [agent] = await transaction
     .select({ id: AGENTS.id })
     .from(AGENTS)
     .where(eq(AGENTS.workspaceId, workspaceId))
@@ -132,14 +130,9 @@ export async function createAgent({
 
   async function create(transaction: DatabaseTransaction) {
     // Match SDK deletion's Workspace → membership order before inserting a dependent Agent.
-    const [workspace] = await transaction
-      .select({ id: WORKSPACE_TABLES.organization.id })
-      .from(WORKSPACE_TABLES.organization)
-      .where(eq(WORKSPACE_TABLES.organization.id, input.workspaceId))
-      .for('share');
-    if (!workspace) return null;
+    if (!(await lockWorkspace(transaction, input.workspaceId))) return null;
 
-    const roles = await readMembership({ transaction, workspaceId: input.workspaceId, userId });
+    const roles = await readWorkspaceRoles({ transaction, workspaceId: input.workspaceId, userId });
     if (!roles || !hasAgentPermission({ roles, action: 'create' })) return null;
 
     const configuration = {
@@ -177,7 +170,7 @@ export async function listAgents({
   return db.transaction(list);
 
   async function list(transaction: DatabaseTransaction) {
-    const roles = await readMembership({ transaction, workspaceId, userId });
+    const roles = await readWorkspaceRoles({ transaction, workspaceId, userId });
     if (!roles || !hasAgentPermission({ roles, action: 'read' })) return null;
 
     const rows = await transaction
@@ -215,7 +208,7 @@ export async function readUsableAgent({
   if (agent.status !== 'active') return null;
   if (agent.visibility === 'private' && agent.createdBy !== userId) return null;
 
-  const roles = await readMembership({ transaction, workspaceId: agent.workspaceId, userId });
+  const roles = await readWorkspaceRoles({ transaction, workspaceId: agent.workspaceId, userId });
   if (!roles || !hasAgentPermission({ roles, action: 'use' })) return null;
 
   return parseAgent(agent);
@@ -238,7 +231,7 @@ async function readManagedAgent({
   if (!agent) return null;
   if (agent.visibility === 'private' && agent.createdBy !== userId) return null;
 
-  const roles = await readMembership({ transaction, workspaceId: agent.workspaceId, userId });
+  const roles = await readWorkspaceRoles({ transaction, workspaceId: agent.workspaceId, userId });
   if (!roles || !hasAgentPermission({ roles, action: 'update' })) return null;
   const canManage = agent.createdBy === userId || hasAgentPermission({ roles, action: 'manage' });
   if (!canManage) return null;
@@ -262,7 +255,8 @@ export function isAvailableConfiguration({
   return selected?.reasoningEfforts.includes(configuration.reasoningEffort) ?? false;
 }
 
-async function readMembership({
+/** Removes only empty private definitions after offboarding has fenced membership changes. */
+export async function deleteEmptyPrivateAgents({
   transaction,
   workspaceId,
   userId,
@@ -270,17 +264,24 @@ async function readMembership({
   transaction: DatabaseTransaction;
   workspaceId: string;
   userId: string;
-}) {
-  // A membership removal waits for this short admission transaction, never for model execution.
-  const [membership] = await transaction
-    .select({ roles: WORKSPACE_MEMBERS.role })
-    .from(WORKSPACE_MEMBERS)
+}): Promise<number> {
+  const sessions = transaction
+    .select({ id: AGENT_SESSIONS.id })
+    .from(AGENT_SESSIONS)
+    .where(eq(AGENT_SESSIONS.agentId, AGENTS.id));
+  const deleted = await transaction
+    .delete(AGENTS)
     .where(
-      and(eq(WORKSPACE_MEMBERS.organizationId, workspaceId), eq(WORKSPACE_MEMBERS.userId, userId)),
+      and(
+        eq(AGENTS.workspaceId, workspaceId),
+        eq(AGENTS.createdBy, userId),
+        eq(AGENTS.visibility, 'private'),
+        notExists(sessions),
+      ),
     )
-    .for('share');
+    .returning({ id: AGENTS.id });
 
-  return membership?.roles;
+  return deleted.length;
 }
 
 function parseAgent(row: AgentRow) {

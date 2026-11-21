@@ -255,6 +255,18 @@ export const SUBMIT_MESSAGE_SCHEMA: z.ZodType<{ sourceEventId: string; text: str
     text: z.string().trim().min(1).max(64_000),
   });
 
+/** Records a human reconciliation decision after the previous execution has stopped. */
+export const RECONCILE_RUN_SCHEMA: z.ZodType<{ reason: string }> = z.strictObject({
+  reason: z.string().trim().min(1).max(2_000),
+});
+
+/** Selects a former member's resources without requesting any private content. */
+export const OFFBOARD_MEMBER_SCHEMA: z.ZodType<{ workspaceId: string; userId: string }> =
+  z.strictObject({
+    workspaceId: z.string().trim().min(1).max(200),
+    userId: z.string().trim().min(1).max(200),
+  });
+
 /** Rejects execution states with missing completion or failure facts. */
 export const AGENT_RUN_SCHEMA: z.ZodType<AgentRun> = z.discriminatedUnion('status', [
   RUN_IDENTITY_SCHEMA.extend({ status: z.literal('queued') }),

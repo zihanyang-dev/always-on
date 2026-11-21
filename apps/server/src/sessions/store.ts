@@ -17,7 +17,7 @@ import {
   INBOX_EVENTS,
 } from '../infrastructure/database/index.js';
 import { readSessionAccess, type SessionAccess } from './access.js';
-import { parseRun, parseSession } from './records.js';
+import { advanceSessionRevision, parseRun, parseSession } from './records.js';
 
 type MessageInput = z.infer<typeof SUBMIT_MESSAGE_SCHEMA>;
 interface SessionConfigurationChange extends SessionAccess {
@@ -184,7 +184,7 @@ export async function cancelSessionRun({
       .returning();
     if (!updated) throw new Error(`Run ${runId} disappeared during cancellation`);
 
-    await advanceRevision(transaction, sessionId);
+    await advanceSessionRevision(transaction, sessionId);
 
     return parseRun(updated);
   }
@@ -271,12 +271,4 @@ async function recordSessionInput({
     .where(eq(AGENT_SESSIONS.id, sessionId));
 
   return parseRun(run);
-}
-
-async function advanceRevision(transaction: DatabaseTransaction, sessionId: string) {
-  // Heartbeats reconcile committed changes even when the corresponding Redis publication is lost.
-  await transaction
-    .update(AGENT_SESSIONS)
-    .set({ revision: sql`${AGENT_SESSIONS.revision} + 1` })
-    .where(eq(AGENT_SESSIONS.id, sessionId));
 }

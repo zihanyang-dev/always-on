@@ -135,12 +135,12 @@ export async function openWorkspaceFixture({
         github: undefined,
       },
       sendEmail,
-      plugins: [
+      createPlugins: (requireTransaction) => [
         createWorkspacePlugin({
           baseUrl: BASE_URL,
           sendEmail,
           canDeleteWorkspace: async (workspaceId) =>
-            !(await hasWorkspaceAgents({ db: database.db, workspaceId })),
+            !(await hasWorkspaceAgents({ transaction: requireTransaction(), workspaceId })),
         }),
       ],
       rateLimit: createAuthRateLimit({ redis: redis.client, prefix }),

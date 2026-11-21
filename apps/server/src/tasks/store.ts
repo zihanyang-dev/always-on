@@ -13,10 +13,9 @@ import {
   type Database,
   type DatabaseTransaction,
 } from '../infrastructure/database/index.js';
+import { advanceSessionRevision, parseRun } from '../sessions/index.js';
 import {
-  advanceRevision,
   getOwnedRunFilter,
-  parseRun,
   type RunClaim,
   type RunToolAccess,
   readRunAuthority,
@@ -92,7 +91,7 @@ export async function writeRunMessage({
       .returning();
     if (!saved) throw new Error(`Run ${claim.run.id} message ${message.index} returned no row`);
 
-    await advanceRevision(transaction, claim.run.sessionId);
+    await advanceSessionRevision(transaction, claim.run.sessionId);
 
     return AGENT_MESSAGE_SCHEMA.parse(saved);
   }

@@ -17,6 +17,8 @@ import {
   INBOX_EVENTS,
   WORKSPACE_MEMBERS,
 } from '../../apps/server/src/infrastructure/database/index.js';
+import { submitSessionMessage } from '../../apps/server/src/sessions/index.js';
+import { executeQueuedRun } from '../../apps/server/src/tasks/execute.js';
 import { claimRun, recoverExpiredRuns, startRunTool } from '../../apps/server/src/tasks/index.js';
 import { openExecutionFixture } from './execution-fixture.js';
 
@@ -96,6 +98,124 @@ it('preserves Session and sandbox ownership when deleting a Workspace with Agent
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ code: 'WORKSPACE_HAS_AGENTS' });
   expect((await fixture.snapshot()).session.id).toBe(fixture.sessionId);
+});
+
+it('checks Workspace deletion on the SDK transaction connection when the pool is full', async () => {
+  await using fixture = await openExecutionFixture();
+  const release = Promise.withResolvers<void>();
+  const ready = Promise.withResolvers<void>();
+  let connections = 0;
+  // Leave one connection for the SDK transaction that owns the Workspace row lock.
+  const held = Promise.all(Array.from({ length: 9 }, () => fixture.db.transaction(hold)));
+  try {
+    await Promise.race([ready.promise, held]);
+    const response = await fixture.request({
+      path: '/api/auth/organization/delete',
+      body: { organizationId: fixture.workspaceId },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'WORKSPACE_HAS_AGENTS' });
+  } finally {
+    release.resolve();
+    await held;
+  }
+
+  async function hold() {
+    connections += 1;
+    if (connections === 9) ready.resolve();
+    await release.promise;
+  }
+});
+
+it.each(['run', 'message'] as const)(
+  'completes durable execution when publishing realtime %s progress fails',
+  async (failedType) => {
+    await using fixture = await openExecutionFixture();
+    const submitted = await fixture.submit();
+    const errors: Error[] = [];
+    await executeQueuedRun({
+      db: fixture.db,
+      runId: submitted.run.id,
+      ownerToken: randomUUID(),
+      signal: new AbortController().signal,
+      onError: (error) => errors.push(error),
+      execute: async (_claim, context) => {
+        await context.emit({ type: 'message_started', index: 1, role: 'assistant' });
+        await context.emit({ type: 'text_delta', index: 1, text: 'First draft' });
+        await context.emit({
+          type: 'message',
+          index: 1,
+          role: 'assistant',
+          state: 'completed',
+          text: 'Persisted response',
+        });
+        return { status: 'completed', checkpoint: null };
+      },
+      publish: async ({ event }) => {
+        if (event.type === failedType) throw new Error('Simulated event publication failure');
+      },
+    });
+
+    const snapshot = await fixture.snapshot();
+    expect(snapshot.run?.status).toBe('completed');
+    expect(snapshot.messages.at(-1)?.text).toBe('Persisted response');
+    expect(errors.map(({ message }) => message)).toEqual([
+      `Run ${submitted.run.id} realtime progress is unavailable`,
+    ]);
+    expect((await fixture.submit()).status).toBe('accepted');
+  },
+);
+
+it('claims inputs in the same order as their user messages when admission transactions interleave', async () => {
+  await using fixture = await openExecutionFixture();
+  const opened = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<void>();
+  const transaction = fixture.db.transaction.bind(fixture.db);
+  const transactions = vi.spyOn(fixture.db, 'transaction').mockImplementationOnce((work) =>
+    transaction(async (tx) => {
+      opened.resolve();
+      await resume.promise;
+      return work(tx);
+    }),
+  );
+  const submittedLater = submitSessionMessage({
+    db: fixture.db,
+    sessionId: fixture.sessionId,
+    userId: fixture.userId,
+    input: { text: 'Admitted second', sourceEventId: randomUUID() },
+  });
+
+  try {
+    await opened.promise;
+    const first = await fixture.submit({ text: 'Admitted first' });
+    resume.resolve();
+    const second = await submittedLater;
+    assert.ok(second.status === 'accepted');
+    expect((await fixture.snapshot()).messages.map(({ text }) => text)).toEqual([
+      'Admitted first',
+      'Admitted second',
+    ]);
+    expect(
+      await claimRun({
+        db: fixture.db,
+        runId: second.run.id,
+        ownerToken: randomUUID(),
+      }),
+    ).toBeNull();
+    expect(
+      (
+        await claimRun({
+          db: fixture.db,
+          runId: first.run.id,
+          ownerToken: randomUUID(),
+        })
+      )?.text,
+    ).toBe('Admitted first');
+  } finally {
+    resume.resolve();
+    await submittedLater;
+    transactions.mockRestore();
+  }
 });
 
 it('redispatches a durable queued Run after a failed wake-up before ownership was acquired', async () => {
