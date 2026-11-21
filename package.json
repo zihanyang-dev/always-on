@@ -7,7 +7,7 @@
     "node": ">=26.13.1 <27"
   },
   "scripts": {
-    "check": "biome check . && pnpm typecheck && pnpm lint:boundaries && pnpm test",
+    "check": "biome check --error-on-warnings . && pnpm typecheck && pnpm lint:boundaries && pnpm test",
     "lint:boundaries": "node scripts/check-boundaries.ts",
     "test": "node --test scripts/*.test.ts apps/server/src/entrypoints/*.test.ts",
     "test:integration": "node --env-file-if-exists=.env.local --test tests/integration/*.test.ts",

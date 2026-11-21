@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 import {
@@ -15,7 +15,9 @@ import {
 
 const TIMESTAMP = '2026-01-01T00:00:00.123Z';
 
-test('Workspace access against PostgreSQL', async (suite) => {
+test('Workspace access against PostgreSQL', testWorkspaceAccess);
+
+async function testWorkspaceAccess(suite: TestContext) {
   await withAccessFixture(
     async (fixture) => {
       await suite.test('uses JSON errors for malformed and oversized application requests', () =>
@@ -28,7 +30,7 @@ test('Workspace access against PostgreSQL', async (suite) => {
     },
     { defaultIsolation: 'repeatable read' },
   );
-});
+}
 
 async function verifyInvalidRequests({ request, register }: AccessFixture) {
   const { cookie } = await register({ email: 'transport@example.test', ip: 6 });

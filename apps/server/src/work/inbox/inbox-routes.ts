@@ -4,12 +4,10 @@ import { z } from 'zod';
 import type { SignedInUser } from '../../access/index.ts';
 import { errorResponse, invalidInput, limitApiBody } from '../../http/index.ts';
 import type { Inbox } from './inbox-event.ts';
+import { MESSAGE_CONTENT } from './inbox-message.ts';
 
 const WORKSPACE_ID = z.object({ workspaceId: z.uuid() });
-const MESSAGE = z.object({
-  clientMessageId: z.uuid(),
-  text: z.string().min(1).max(8000).refine(validMessage),
-});
+const MESSAGE = MESSAGE_CONTENT.extend({ clientMessageId: z.uuid() });
 type MessageContext = Context<
   Env,
   string,
@@ -50,20 +48,17 @@ export function createInboxRoutes({
     if (!user) return errorResponse(ctx, 401, 'unauthenticated');
 
     const { workspaceId } = ctx.req.valid('param');
-    const { clientMessageId, text } = ctx.req.valid('json');
+    const { clientMessageId, text, target } = ctx.req.valid('json');
     const receipt = await inbox.acceptUserMessage({
       workspaceId,
       userId: user.id,
       clientMessageId,
       text,
+      target,
     });
     if (receipt.status !== 'accepted')
       return errorResponse(ctx, MESSAGE_ERROR_STATUS[receipt.status], receipt.status);
 
     return ctx.json({ eventId: receipt.eventId, duplicate: receipt.duplicate }, 202);
   }
-}
-
-function validMessage(text: string) {
-  return text.trim().length > 0 && text.isWellFormed() && !text.includes('\u0000');
 }

@@ -63,13 +63,13 @@ export async function authorizeWorkspace(
   return success(role);
 }
 
-/** Call in the same READ COMMITTED transaction as the write it authorizes. */
-export async function authorizeMessageSubmission(
+/** Call in the same READ COMMITTED transaction as the operation it authorizes. */
+export async function authorizeWorkspaceAccess(
   transaction: DatabaseTransaction,
-  actor: WorkspaceActor,
+  { permission, ...actor }: WorkspaceActor & { permission: 'read' | 'write' },
 ): Promise<'allowed' | 'not_found' | 'forbidden'> {
   const access = await authorizeWorkspace(transaction, { actor, lock: 'share', access: 'member' });
   if (!access.ok) return access.error;
 
-  return access.value === 'viewer' ? 'forbidden' : 'allowed';
+  return permission === 'write' && access.value === 'viewer' ? 'forbidden' : 'allowed';
 }

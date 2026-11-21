@@ -6,4 +6,4 @@ Work 域拥有 Inbox。用户入口通过 Access 校验 Workspace 的发消息�
 
 消费者通过 `FOR UPDATE SKIP LOCKED` 批量领取。每次领取分配新的令牌，并将下次可领取时间推进到租约到期时间。完成和重试先锁行，再校验当前令牌和期限。进程中断后事件可以重新领取。消费者对处理过程中的外部副作用仍需做幂等。 [PostgreSQL 行锁](https://www.postgresql.org/docs/current/sql-select.html)
 
-第一轮提供用户消息 HTTP 接口和供消费者调用的领取、完成及重试操作。签名 Webhook 在集成测试中注入连接来验收。在实际配置了连接解析器的 API 实例中，Webhook 路由跟随连接启用。Router 接上后，由它持久化事件归属和处理决定。
+Inbox 提供用户消息 HTTP 接口，以及供消费者调用的领取、完成和重试操作。签名 Webhook 在集成测试中注入连接来验收。在实际配置了连接解析器的 API 实例中，Webhook 路由跟随连接启用。事件归属和执行交接由 Work 域持久化。 [工作归属与执行交接](0004-work-routing.md)

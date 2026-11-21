@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { openDatabase } from '../../apps/server/src/infrastructure/database/index.ts';
 import { startObservability } from '../../apps/server/src/infrastructure/index.ts';
@@ -12,6 +12,7 @@ import {
   textField,
   withAccessFixture,
 } from './access-fixture.ts';
+import { signWebhook } from './webhook-fixture.ts';
 
 const SIGNING_KEY = Buffer.alloc(32, 42);
 const SECOND_SIGNING_KEY = Buffer.alloc(32, 43);
@@ -210,7 +211,7 @@ async function verifyWebhooks(
   const tampered = await request(`/api/webhooks/${connectionId}`, {
     method: 'POST',
     body: `${body} `,
-    headers: signWebhook({ sourceEventId, body }),
+    headers: signWebhook({ sourceEventId, body, key: SIGNING_KEY }),
   });
   await expectStatus(tampered, 401);
   await expectStatus(await send({ id: randomUUID() }), 404);
@@ -240,7 +241,7 @@ async function verifyWebhooks(
   const wrongKey = await request(`/api/webhooks/${otherConnectionId}`, {
     method: 'POST',
     body,
-    headers: signWebhook({ sourceEventId, body }),
+    headers: signWebhook({ sourceEventId, body, key: SIGNING_KEY }),
   });
   await expectStatus(wrongKey, 401);
 
@@ -344,24 +345,4 @@ async function accepted(response: Response) {
   const { eventId, duplicate } = await responseBody(response);
   assert.ok(typeof duplicate === 'boolean');
   return { eventId: textField(eventId), duplicate };
-}
-
-function signWebhook({
-  sourceEventId,
-  body,
-  key = SIGNING_KEY,
-}: {
-  sourceEventId: string;
-  body: string;
-  key?: Buffer;
-}) {
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const signature = createHmac('sha256', key)
-    .update(`${sourceEventId}.${timestamp}.${body}`)
-    .digest('base64');
-  return {
-    'webhook-id': sourceEventId,
-    'webhook-timestamp': timestamp,
-    'webhook-signature': `v1,${signature}`,
-  };
 }

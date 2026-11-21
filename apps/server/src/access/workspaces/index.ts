@@ -8,7 +8,7 @@ import type { WorkspaceEnv } from './workspace-http.ts';
 import { createWorkspaceRoutes } from './workspace-routes.ts';
 import { createWorkspaceStore } from './workspace-store.ts';
 
-export { authorizeMessageSubmission } from './persistence/workspace-authorization.ts';
+export { authorizeWorkspaceAccess } from './persistence/workspace-authorization.ts';
 
 export function createWorkspaceAccessRoutes({
   db,

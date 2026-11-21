@@ -34,7 +34,7 @@
 
 ## 1. 控制流与扁平化（不要楼梯）
 
-- MUST 函数内块嵌套不超过 3 层 [判断]。要写第 4 层时，用下面的手段拍平或抽函数。
+- MUST 函数内块嵌套最多 3 层，由 Biome 的 `noExcessiveNestedBlocks` 检查。
 - MUST 先处理例外：卫语句 return / throw，主流程留在最左列。
 - PREFER 只有一条简单 return / throw / continue / break、且没有 else 的卫语句省略大括号。条件较长时，条件和返回语句分成两行也可以；不要仅因 formatter 换行就加大括号。分支包含多条语句时使用大括号。Biome 的 useBlockStatements 不支持这种例外，关闭该规则，按此约定评审。
 - MUST return / throw / continue / break 之后不写 else。
@@ -50,7 +50,7 @@
 - AVOID 嵌套三元。超过一层改成卫语句、查表或小函数。
 - AVOID 用 && / || 做控制流（cond && doThing()）；写 if。
 - AVOID 在条件里写复杂表达式；先赋给命名良好的布尔变量。
-- MUST 回调嵌套超过 2 层时，把内层回调抽成具名函数。
+- MUST 回调嵌套最多 2 层，由 Biome 的 `noExcessiveNestedCallbacks` 检查。多步骤的事务、工具调用或测试可以用具名函数表达，把回调注册留在调用处。
 
 ```ts
 if (content.length === 0) return [];
@@ -283,6 +283,7 @@ export function createUser({
 - MUST 让注册入口一眼读出路由、中间件或测试场景。多条路由注册之间留空行。需要展开多个步骤的处理过程使用具名函数，短回调可以就地表达。
 - MUST 在调用处读得出关键操作及其顺序。涉及事务、加锁、重试或资源释放时，把先后约束保留在负责该操作的函数里。紧凑的查询与紧随其后的判断放在一起。
 - PREFER 提取能集中业务规则、封装协议细节或管理资源的逻辑。每次提取后一起阅读调用处和实现，确认关键行为仍然容易找到。
+- PREFER 把一次操作的前置条件、关键步骤和失败处理集中在同一处。短小且仅服务于当前操作的逻辑可以就地表达。新文件应有独立职责。
 
 ---
 
@@ -643,8 +644,9 @@ tsconfig 必开：
 - module / moduleResolution：Node 项目用 nodenext；打包器项目用 preserve + bundler
 - target：ES2022 或更高
 
-基础配置见 [Biome](../biome.json) 和 [TypeScript](../tsconfig.base.json)。Biome 的 `noFloatingPromises` 检查未处理的 Promise 表达式，`noMisusedPromises` 检查条件与回调等位置的 Promise 误用。主动脱离请求生命周期的任务仍需在所属模块中报告失败并管理释放。
-下文列出的 typescript-eslint 规则名用于说明检查目标。导出返回类型、块嵌套深度、职责归属及代码形状仍需人工审查。
+基础配置见 [Biome](../biome.json) 和 [TypeScript](../tsconfig.base.json)。`pnpm check` 将 Biome 警告视为失败。Biome 检查块与回调嵌套、联合类型分支、不安全返回、异常类型、空块、依赖声明、模块语法和具名重导出。
+
+`noFloatingPromises` 检查未处理的 Promise 表达式，`noMisusedPromises` 检查条件与回调等位置的 Promise 误用。主动脱离请求生命周期的任务仍需在所属模块中报告失败并管理释放。下文列出的 typescript-eslint 规则名用于说明检查目标。导出返回类型、职责归属及函数主线仍需人工审查。
 
 项目划定模块边界后，把确定的依赖方向和公开入口纳入自动检查。规则覆盖普通导入、重导出、类型引用和字面量动态导入。新增依赖时核对它为什么属于这个调用方，接口变化时同步更新规则和回归用例。
 

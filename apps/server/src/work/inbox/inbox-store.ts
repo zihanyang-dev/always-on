@@ -1,4 +1,4 @@
-import { authorizeMessageSubmission } from '../../access/index.ts';
+import { authorizeWorkspaceAccess } from '../../access/index.ts';
 import type { Database } from '../../infrastructure/database/index.ts';
 import type { Observability } from '../../infrastructure/index.ts';
 import type {
@@ -25,13 +25,18 @@ export function createInbox(db: Database, observability?: Observability): Inbox 
     userId,
     clientMessageId,
     text,
+    target,
   }: UserMessage): Promise<UserMessageReceipt> {
     const source: InboxEvent['source'] = { kind: 'user', id: userId, eventId: clientMessageId };
     const traceParent = currentTraceParent();
-    const event = { workspaceId, source, eventType: 'message.received', payload: { text } };
+    const event = { workspaceId, source, eventType: 'message.received', payload: { text, target } };
 
     const receipt = await transaction().execute<UserMessageReceipt>(async (tx) => {
-      const access = await authorizeMessageSubmission(tx, { workspaceId, userId });
+      const access = await authorizeWorkspaceAccess(tx, {
+        workspaceId,
+        userId,
+        permission: 'write',
+      });
       if (access !== 'allowed') return { status: access };
 
       return appendInboxEvent(tx, event, traceParent);

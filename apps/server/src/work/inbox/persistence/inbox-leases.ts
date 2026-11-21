@@ -4,7 +4,7 @@ import {
   type DatabaseSchema,
   type DatabaseTransaction,
 } from '../../../infrastructure/database/index.ts';
-import type { InboxLease, LeaseKey } from '../inbox-event.ts';
+import type { InboxEvent, InboxLease, LeaseKey } from '../inbox-event.ts';
 
 type InboxRow = Selectable<DatabaseSchema['inbox_events']>;
 type LeaseOutcome = { kind: 'complete' } | { kind: 'retry'; delayMs: number };
@@ -52,6 +52,15 @@ export async function settleInboxLease(
     .executeTakeFirst();
   if (!lease) return null;
 
+  return settleLockedInboxLease(transaction, { eventId, token }, outcome);
+}
+
+/** Call after locking the Inbox row in this transaction. */
+export async function settleLockedInboxLease(
+  transaction: DatabaseTransaction,
+  { eventId, token }: LeaseKey,
+  outcome: LeaseOutcome,
+): Promise<SettledEvent | null> {
   const change =
     outcome.kind === 'complete'
       ? { lease_token: null, completed_at: NOW }
@@ -61,7 +70,8 @@ export async function settleInboxLease(
   const saved = await transaction
     .updateTable('inbox_events')
     .set(change)
-    .where('id', '=', lease.id)
+    .where('id', '=', eventId)
+    .where('lease_token', '=', token)
     .where('available_at', '>', NOW)
     .returning(['id', 'source_kind as source', 'trace_parent as traceParent'])
     .executeTakeFirst();
@@ -69,28 +79,61 @@ export async function settleInboxLease(
   return saved ?? null;
 }
 
+export async function lockInboxEvent(
+  transaction: DatabaseTransaction,
+  { eventId, token }: LeaseKey,
+): Promise<InboxEvent | null> {
+  const event = await transaction
+    .selectFrom('inbox_events')
+    .selectAll()
+    .where('id', '=', eventId)
+    .where('lease_token', '=', token)
+    .forUpdate()
+    .executeTakeFirst();
+
+  return event ? toInboxEvent(event) : null;
+}
+
+export async function readInboxEvent(
+  transaction: DatabaseTransaction,
+  eventId: string,
+): Promise<InboxEvent> {
+  const event = await transaction
+    .selectFrom('inbox_events')
+    .selectAll()
+    .where('id', '=', eventId)
+    .executeTakeFirstOrThrow();
+
+  return toInboxEvent(event);
+}
+
 function toLease(row: InboxRow): InboxLease {
-  const payload = row.payload;
   if (!row.lease_token) throw new Error('Claimed Inbox event is missing its lease token');
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload))
-    throw new Error('Stored Inbox payload must be an object');
 
   return {
     token: row.lease_token,
     expiresAt: row.available_at,
     attempt: row.attempt_count,
-    event: {
-      id: row.id,
-      workspaceId: row.workspace_id,
-      source: { kind: row.source_kind, id: row.source_id, eventId: row.source_event_id },
-      eventType: row.event_type,
-      payload,
-      conversationId: row.conversation_id,
-      replyTo: row.reply_to,
-      occurredAt: row.occurred_at,
-      receivedAt: row.received_at,
-      traceParent: row.trace_parent,
-    },
+    event: toInboxEvent(row),
+  };
+}
+
+function toInboxEvent(row: InboxRow): InboxEvent {
+  const payload = row.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+    throw new Error('Stored Inbox payload must be an object');
+
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    source: { kind: row.source_kind, id: row.source_id, eventId: row.source_event_id },
+    eventType: row.event_type,
+    payload,
+    conversationId: row.conversation_id,
+    replyTo: row.reply_to,
+    occurredAt: row.occurred_at,
+    receivedAt: row.received_at,
+    traceParent: row.trace_parent,
   };
 }
 

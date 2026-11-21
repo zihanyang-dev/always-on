@@ -9,7 +9,7 @@ export type {
   OAuthCredentials,
   SignedInUser,
 } from './authentication/index.ts';
-export { authorizeMessageSubmission } from './workspaces/index.ts';
+export { authorizeWorkspaceAccess } from './workspaces/index.ts';
 
 export type AccessOptions = {
   db: Parameters<typeof createWorkspaceAccessRoutes>[0]['db'];

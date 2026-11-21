@@ -15,7 +15,9 @@ import {
   withAccessFixture,
 } from './access-fixture.ts';
 
-test('Authentication against PostgreSQL', async (suite) => {
+test('Authentication against PostgreSQL', testAuthentication);
+
+async function testAuthentication(suite: TestContext) {
   await withAccessFixture(async (fixture) => {
     await suite.test(
       'advertises configured login methods and accepts a GitHub callback',
@@ -31,7 +33,7 @@ test('Authentication against PostgreSQL', async (suite) => {
       verifyPasswordReset(fixture),
     );
   });
-});
+}
 
 async function verifyGitHubLogin({ db, request }: AccessFixture, context: TestContext) {
   assert.deepEqual(await (await request('/api/login-methods')).json(), {

@@ -1,12 +1,13 @@
 # Always On
 
-服务端支持邮箱、GitHub 和 Google 登录，以及 Workspace、成员和邀请管理。其余领域随功能引入。
+服务端支持邮箱、GitHub 和 Google 登录、Workspace 成员管理，以及从 Inbox 发起和继续工作。
 
 ## 目录与检查
 
 - [应用目录、领域依赖与 ORM 归属](docs/adr/0001-repository-boundaries.md)
 - [登录身份与 Workspace 成员权限](docs/adr/0002-workspace-membership.md)
 - [持久 Inbox 与渠道入口](docs/adr/0003-durable-inbox.md)
+- [工作归属与执行交接](docs/adr/0004-work-routing.md)
 - [项目术语](GLOSSARY.md)
 
 ```sh
@@ -30,6 +31,12 @@ GitHub 和 Google 的回调地址分别是 `BETTER_AUTH_URL` 下的 `/api/auth/c
 Workspace、成员和待处理邀请的列表默认返回 25 条，`limit` 可设为 1 到 100。把 `nextCursor` 作为下一次请求的 `cursor`，返回 `null` 时到达末页。
 
 `POST /api/inbox/:workspaceId/messages` 接收包含 `clientMessageId` 和 `text` 的 JSON。客户端为每条消息生成 UUID，重试时复用。服务端持久化后返回 `202` 和 `eventId`。
+
+在另一个终端用 `pnpm --filter @always-on/server start:worker` 启动 Inbox 消费进程。
+
+- 消息携带 `"target": {"kind": "new_work"}` 时显式交办。携带 `"target": {"kind": "existing_work", "workId": "..."}` 时继续已有工作。
+- `GET /api/work/:workspaceId/receipts/:eventId` 可以查看自己提交的事件归属。`GET /api/work/:workspaceId/:workId` 返回工作及当前进度。
+- API 配置连接解析器后，`POST /api/work/:workspaceId/:workId/threads` 接收 `connectionId` 和 `conversationId`。之后所绑定讨论的签名 Webhook 事件会为同一项工作安排下一轮。
 
 ## 可观测性
 

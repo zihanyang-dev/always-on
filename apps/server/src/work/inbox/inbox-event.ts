@@ -1,3 +1,5 @@
+import type { MessageContent } from './inbox-message.ts';
+
 type JsonValue = null | boolean | number | string | JsonValue[] | EventPayload;
 export type EventPayload = { [key: string]: JsonValue | undefined };
 
@@ -12,11 +14,10 @@ export type ChannelEvent = {
   occurredAt?: string | undefined;
 };
 
-export type UserMessage = {
+export type UserMessage = MessageContent & {
   workspaceId: string;
   userId: string;
   clientMessageId: string;
-  text: string;
 };
 
 export type InboxReceipt =

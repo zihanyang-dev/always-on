@@ -31,6 +31,8 @@ export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export type WorkEventDisposition = "assigned" | "needs_routing" | "rejected";
+
 export type WorkspaceRole = "admin" | "member" | "owner" | "viewer";
 
 export interface AuthAccounts {
@@ -105,6 +107,31 @@ export interface Users {
   updated_at: Generated<Timestamp>;
 }
 
+export interface WorkEventDecisions {
+  decided_at: Generated<Timestamp>;
+  disposition: WorkEventDisposition;
+  event_id: string;
+  work_id: string | null;
+}
+
+export interface WorkItems {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  goal: string;
+  id: Generated<string>;
+  progress: string | null;
+  workspace_id: string;
+}
+
+export interface WorkRunRequests {
+  available_at: Generated<Timestamp>;
+  completed_at: Timestamp | null;
+  event_id: string;
+  lease_token: string | null;
+  sequence: Generated<Int8>;
+  work_id: string;
+}
+
 export interface WorkspaceInvitations {
   created_at: Generated<Timestamp>;
   created_by: string;
@@ -130,6 +157,13 @@ export interface Workspaces {
   name: string;
 }
 
+export interface WorkThreadBindings {
+  connection_id: string;
+  conversation_id: string;
+  work_id: string;
+  workspace_id: string;
+}
+
 export interface DB {
   auth_accounts: AuthAccounts;
   auth_rate_limits: AuthRateLimits;
@@ -137,6 +171,10 @@ export interface DB {
   auth_verifications: AuthVerifications;
   inbox_events: InboxEvents;
   users: Users;
+  work_event_decisions: WorkEventDecisions;
+  work_items: WorkItems;
+  work_run_requests: WorkRunRequests;
+  work_thread_bindings: WorkThreadBindings;
   workspace_invitations: WorkspaceInvitations;
   workspace_members: WorkspaceMembers;
   workspaces: Workspaces;

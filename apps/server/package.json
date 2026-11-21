@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env.local src/entrypoints/api.ts",
     "start": "node src/entrypoints/api.ts",
+    "start:worker": "node --env-file-if-exists=../../.env.local src/entrypoints/worker.ts",
     "db:migrate": "node --env-file-if-exists=../../.env.local migrations/run.ts",
     "db:migration:create": "node-pg-migrate create --migration-file-language sql --migration-filename-format utc",
     "db:types": "node --env-file-if-exists=../../.env.local migrations/generate-types.ts",

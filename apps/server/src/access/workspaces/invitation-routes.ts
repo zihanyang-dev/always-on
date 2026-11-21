@@ -130,13 +130,22 @@ export function createInvitationRoutes({
     });
     if (!result.ok) return workspaceError(ctx, result.error);
 
-    const { invitation, token, workspaceName } = result.value;
-    const delivery = await sendInvitationEmail(sendEmail, {
-      email: invitation.email,
-      token,
-      workspaceName,
-    });
-    return ctx.json({ invitation, delivery }, 201);
+    const { invitation, workspaceName, token } = result.value;
+    const link = new URL('/api/workspaces/invitations/review', origin);
+    link.searchParams.set('token', token);
+
+    try {
+      await sendEmail({
+        to: invitation.email,
+        subject: 'Workspace invitation · Always On',
+        text: `You have been invited to ${workspaceName}. Sign in with this email to review the invitation.\n\n${link}`,
+      });
+    } catch (error) {
+      reportError(new Error('Workspace invitation email delivery failed', { cause: error }));
+      return ctx.json({ invitation, delivery: 'failed' }, 201);
+    }
+
+    return ctx.json({ invitation, delivery: 'sent' }, 201);
   }
 
   async function cancelInvitation(
@@ -149,26 +158,5 @@ export function createInvitationRoutes({
       userId: ctx.get('user').id,
     });
     return result.ok ? ctx.body(null, 204) : workspaceError(ctx, result.error);
-  }
-
-  async function sendInvitationEmail(
-    send: SendEmail,
-    { email, token, workspaceName }: { email: string; token: string; workspaceName: string },
-  ) {
-    const link = new URL('/api/workspaces/invitations/review', origin);
-    link.searchParams.set('token', token);
-
-    try {
-      await send({
-        to: email,
-        subject: 'Workspace invitation · Always On',
-        text: `You have been invited to ${workspaceName}. Sign in with this email to review the invitation.\n\n${link}`,
-      });
-    } catch (error) {
-      reportError(new Error('Workspace invitation email delivery failed', { cause: error }));
-      return 'failed';
-    }
-
-    return 'sent';
   }
 }

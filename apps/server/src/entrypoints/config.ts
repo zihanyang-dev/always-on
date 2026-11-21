@@ -4,19 +4,22 @@ import type { EmailConfig, ObservabilityConfig } from '../infrastructure/index.t
 
 const OPTIONAL_SECRET = z.string().trim().min(1).optional();
 
-const API_ENV = z.object({
-  NODE_ENV: z.string().optional(),
+const PROCESS_ENV = z.object({
   DATABASE_URL: z.url({ protocol: /^postgres(?:ql)?$/ }),
-  HOST: z.string().trim().min(1).default('127.0.0.1'),
-  PORT: z.coerce.number().int().min(1).max(65535).default(3001),
-  BETTER_AUTH_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:3001'),
-  BETTER_AUTH_SECRET: z.string().min(32),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
-  OTEL_SERVICE_NAME: z.string().trim().min(1).default('always-on-api'),
+  OTEL_SERVICE_NAME: z.string().trim().min(1).optional(),
   OTEL_EXPORTER_OTLP_ENDPOINT: z
     .url({ protocol: /^https?$/ })
     .refine(isOtlpEndpoint)
     .optional(),
+});
+
+const API_ENV = PROCESS_ENV.extend({
+  NODE_ENV: z.string().optional(),
+  HOST: z.string().trim().min(1).default('127.0.0.1'),
+  PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+  BETTER_AUTH_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:3001'),
+  BETTER_AUTH_SECRET: z.string().min(32),
   GITHUB_CLIENT_ID: OPTIONAL_SECRET,
   GITHUB_CLIENT_SECRET: OPTIONAL_SECRET,
   GOOGLE_CLIENT_ID: OPTIONAL_SECRET,
@@ -30,36 +33,28 @@ const API_ENV = z.object({
     .optional(),
 });
 
-type ApiConfig = {
+type ProcessConfig = {
   databaseUrl: string;
+  observability: ObservabilityConfig;
+};
+
+type ApiConfig = ProcessConfig & {
   host: string;
   port: number;
   auth: AuthenticationConfig;
   email: EmailConfig | undefined;
-  observability: ObservabilityConfig;
 };
 
 /** Parses deployment input once, without putting secret values in configuration errors. */
 export function readApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
-  const parsed = API_ENV.safeParse(env);
-  if (!parsed.success) {
-    const fields = parsed.error.issues.map(({ path }) => path.join('.'));
-    throw new Error(`Invalid API configuration: ${fields.join(', ')}`);
-  }
-
-  const values = parsed.data;
+  const values = readEnv(API_ENV, env, 'API');
   const origin = readAuthOrigin({ url: values.BETTER_AUTH_URL, nodeEnv: values.NODE_ENV });
   const email = readEmailConfig({ apiKey: values.RESEND_API_KEY, from: values.EMAIL_FROM });
 
   return {
-    databaseUrl: values.DATABASE_URL,
+    ...readProcessConfig(values, 'always-on-api'),
     host: values.HOST,
     port: values.PORT,
-    observability: {
-      logLevel: values.LOG_LEVEL,
-      serviceName: values.OTEL_SERVICE_NAME,
-      otlpEndpoint: values.OTEL_EXPORTER_OTLP_ENDPOINT,
-    },
     auth: {
       origin,
       secret: values.BETTER_AUTH_SECRET,
@@ -75,6 +70,34 @@ export function readApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       }),
     },
     email,
+  };
+}
+
+export function readWorkerConfig(env: NodeJS.ProcessEnv): ProcessConfig {
+  const values = readEnv(PROCESS_ENV, env, 'Worker');
+
+  return readProcessConfig(values, 'always-on-worker');
+}
+
+function readEnv<T>(schema: z.ZodType<T>, env: NodeJS.ProcessEnv, processName: string) {
+  const parsed = schema.safeParse(env);
+  if (parsed.success) return parsed.data;
+
+  const fields = parsed.error.issues.map(({ path }) => path.join('.'));
+  throw new Error(`Invalid ${processName} configuration: ${fields.join(', ')}`);
+}
+
+function readProcessConfig(
+  values: z.output<typeof PROCESS_ENV>,
+  serviceName: string,
+): ProcessConfig {
+  return {
+    databaseUrl: values.DATABASE_URL,
+    observability: {
+      logLevel: values.LOG_LEVEL,
+      serviceName: values.OTEL_SERVICE_NAME ?? serviceName,
+      otlpEndpoint: values.OTEL_EXPORTER_OTLP_ENDPOINT,
+    },
   };
 }
 

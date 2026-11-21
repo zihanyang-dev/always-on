@@ -25,6 +25,12 @@
     "rules": {
       "complexity": {
         "noBannedTypes": "error",
+        "noExcessiveNestedCallbacks": {
+          "level": "error",
+          "options": {
+            "max": 2
+          }
+        },
         "useMaxParams": {
           "level": "error",
           "options": {
@@ -32,13 +38,33 @@
           }
         }
       },
+      "correctness": {
+        "noUndeclaredDependencies": "error"
+      },
       "nursery": {
+        "noExcessiveNestedBlocks": {
+          "level": "error",
+          "options": {
+            "max": 3
+          }
+        },
         "noFloatingPromises": "error",
-        "noMisusedPromises": "error"
+        "noMisusedPromises": "error",
+        "noUnsafeReturn": "error",
+        "useExhaustiveSwitchCases": {
+          "level": "error",
+          "options": {
+            "requireExplicitCase": true
+          }
+        }
+      },
+      "performance": {
+        "noReExportAll": "error"
       },
       "style": {
         "useBlockStatements": "off",
         "useImportType": "error",
+        "noCommonJs": "error",
         "noNonNullAssertion": "error",
         "noDefaultExport": "error",
         "noEnum": "error",
@@ -47,10 +73,12 @@
         "noParameterProperties": "error",
         "noProcessEnv": "error",
         "noUselessElse": "error",
-        "useExportType": "error"
+        "useExportType": "error",
+        "useThrowOnlyError": "error"
       },
       "suspicious": {
         "noConfusingVoidType": "error",
+        "noEmptyBlockStatements": "error",
         "noExplicitAny": "error",
         "noTsIgnore": "error",
         "noImportCycles": {
@@ -78,6 +106,7 @@
     {
       "includes": [
         "apps/server/src/entrypoints/api.ts",
+        "apps/server/src/entrypoints/worker.ts",
         "apps/server/migrations/run.ts",
         "tests/integration/*.ts"
       ],

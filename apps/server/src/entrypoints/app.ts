@@ -9,7 +9,12 @@ import {
   observeHttpRequests,
 } from '../http/index.ts';
 import type { Observability } from '../infrastructure/index.ts';
-import { createInbox, createInboxRoutes } from '../work/index.ts';
+import {
+  createInbox,
+  createInboxRoutes,
+  createWorkRoutes,
+  createWorkStore,
+} from '../work/index.ts';
 
 type AppOptions = AccessOptions & {
   observability?: Observability;
@@ -30,12 +35,16 @@ export function createApp({
 
   const access = createAccess(accessOptions);
   const inbox = createInbox(accessOptions.db, observability);
+  const work = createWorkStore(accessOptions.db);
+  const { origin } = accessOptions.config;
 
   app.route('/api', access.routes);
 
+  app.route('/api', createInboxRoutes({ inbox, origin, getUser: access.getUser }));
+
   app.route(
-    '/api',
-    createInboxRoutes({ inbox, origin: accessOptions.config.origin, getUser: access.getUser }),
+    '/api/work',
+    createWorkRoutes({ work, origin, getUser: access.getUser, findConnectionWorkspace }),
   );
 
   if (findWebhookConnection) {
@@ -53,4 +62,9 @@ export function createApp({
   app.onError(httpErrorHandler(accessOptions.reportError));
 
   return app;
+
+  async function findConnectionWorkspace(connectionId: string) {
+    const connection = await findWebhookConnection?.(connectionId);
+    return connection?.workspaceId ?? null;
+  }
 }
